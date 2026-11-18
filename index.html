@@ -2384,6 +2384,99 @@ function bagSpec(I) {
   if (b.base && b.base.on) t += ' — قاعدة تقوية';
   return t;
 }
+// ---- reading a PDF from the inside (no Acrobat): colour spaces, spot colours, fonts, overprint, rich black, ink of vector art
+async function pdfInspect(bytes, opt){
+  opt = opt || {}; const TACMAX = +opt.tac || 300;
+  const N = bytes.length; let s = ''; for (let i = 0; i < N; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(N, i + 0x8000)));
+  const R = { ok: true, encrypted: /\/Encrypt\s/.test(s), objs: 0, dicts: [], streams: 0, failed: 0 };
+  if (R.encrypted) { R.ok = false; return R; }
+  const inflate = async u8 => { for (const fmt of ['deflate', 'deflate-raw']) { try { const ds = new DecompressionStream(fmt); const out = new Response(new Blob([u8]).stream().pipeThrough(ds)); const b = new Uint8Array(await out.arrayBuffer()); return b; } catch (e) {} } return null; };
+  const a85 = u8 => { const t = lat(u8).replace(/\s+/g, '').replace(/^<~/, '').replace(/~>.*$/, ''), out = []; let g = [];
+    for (let i = 0; i < t.length; i++) { const c = t[i]; if (c === 'z' && !g.length) { out.push(0, 0, 0, 0); continue; } g.push(c.charCodeAt(0) - 33); if (g.length === 5) { let v = 0; for (const d of g) v = v * 85 + d; out.push(v >>> 24 & 255, v >>> 16 & 255, v >>> 8 & 255, v & 255); g = []; } }
+    if (g.length) { const n = g.length; while (g.length < 5) g.push(84); let v = 0; for (const d of g) v = v * 85 + d; const b4 = [v >>> 24 & 255, v >>> 16 & 255, v >>> 8 & 255, v & 255]; out.push(...b4.slice(0, n - 1)); }
+    return new Uint8Array(out); };
+  const ahx = u8 => { const t = lat(u8).replace(/[^0-9A-Fa-f]/g, ''), out = new Uint8Array(Math.ceil(t.length / 2)); for (let i = 0; i < out.length; i++) out[i] = parseInt((t.substr(2 * i, 2) + '0').slice(0, 2), 16); return out; };
+  const lat = u8 => { let t = ''; for (let i = 0; i < u8.length; i += 0x8000) t += String.fromCharCode.apply(null, u8.subarray(i, Math.min(u8.length, i + 0x8000))); return t; };
+  const byNum = {}, contents = [], dicts = [];
+  // every "n g obj ... endobj"
+  const re = /(\d+)\s+(\d+)\s+obj\b/g; let m;
+  const starts = []; while ((m = re.exec(s))) starts.push([+m[1], m.index + m[0].length]);
+  for (let k = 0; k < starts.length; k++) {
+    const [num, a] = starts[k], b = k + 1 < starts.length ? starts[k + 1][1] : N;
+    let body = s.slice(a, b); const e = body.indexOf('endobj'); if (e >= 0) body = body.slice(0, e);
+    const st = body.search(/\bstream\r?\n/); let dict = st >= 0 ? body.slice(0, st) : body; R.objs++;
+    byNum[num] = dict; dicts.push(dict);
+    if (st >= 0) { R.streams++;
+      const hdr = body.match(/\bstream\r?\n/)[0], d0 = a + st + hdr.length; let len = (dict.match(/\/Length\s+(\d+)(?!\s+\d+\s+R)/) || [])[1];
+      let d1 = len ? d0 + +len : s.indexOf('endstream', d0); if (d1 < d0 || d1 > N) d1 = s.indexOf('endstream', d0);
+      if (/\/Subtype\s*\/Image\b/.test(dict) || /\/FontFile|\/Type\s*\/XRef|\/Length1|\/Subtype\s*\/(Type1C|CIDFontType0C|OpenType)/.test(dict) || /\/Type\s*\/Metadata/.test(dict)) continue;
+      let data = bytes.subarray(d0, d1); const fl = ((dict.match(/\/Filter\s*(\[[^\]]*\]|\/\w+)/) || [])[1] || '').match(/\/\w+/g) || []; let bad = false;
+      for (const f of fl) { if (f === '/FlateDecode' || f === '/Fl') { data = await inflate(data); if (!data) { bad = true; break; } } else if (f === '/ASCII85Decode' || f === '/A85') data = a85(data); else if (f === '/ASCIIHexDecode' || f === '/AHx') data = ahx(data); else { bad = true; break; } }
+      if (bad) { R.failed++; continue; }
+      const txt = lat(data);
+      if (/\/Type\s*\/ObjStm/.test(dict)) { const first = +(dict.match(/\/First\s+(\d+)/) || [])[1] || 0, nn = +(dict.match(/\/N\s+(\d+)/) || [])[1] || 0;
+        const head = txt.slice(0, first).trim().split(/\s+/).map(Number), offs = []; for (let i = 0; i < nn; i++) offs.push([head[2 * i], head[2 * i + 1]]);
+        offs.forEach(([on, off], i) => { const t = txt.slice(first + off, i + 1 < offs.length ? first + offs[i + 1][1] : txt.length); byNum[on] = t; dicts.push(t); R.objs++; });
+      } else if (/\/Type\s*\/XObject/.test(dict) && /\/Subtype\s*\/Form/.test(dict) || !/\/Type\s*\/\w/.test(dict) || /\/Type\s*\/Pattern/.test(dict)) contents.push(txt);
+    }
+  }
+  const D = dicts.join('\n'), ref = n => byNum[n] || '';
+  const csOf = t => {   // a colour space description -> 'rgb' | 'cmyk' | 'gray' | 'spot' | 'lab' | 'indexed:' + base
+    t = String(t || '').trim(); let r = t.match(/^(\d+)\s+0\s+R/); if (r) t = ref(+r[1]).trim();
+    if (/^\/DeviceRGB|^\/CalRGB|^\[\s*\/CalRGB/.test(t)) return 'rgb'; if (/^\/DeviceCMYK/.test(t)) return 'cmyk'; if (/^\/DeviceGray|^\/CalGray|^\[\s*\/CalGray/.test(t)) return 'gray';
+    if (/^\[\s*\/ICCBased\s+(\d+)\s+0\s+R/.test(t)) { const n = +(ref(+t.match(/\/ICCBased\s+(\d+)/)[1]).match(/\/N\s+(\d)/) || [])[1]; return n === 4 ? 'cmyk' : n === 1 ? 'gray' : 'rgb'; }
+    if (/^\[\s*\/(Separation|DeviceN)/.test(t)) return 'spot'; if (/^\[\s*\/Lab/.test(t)) return 'lab';
+    if (/^\[\s*\/Indexed/.test(t)) return 'indexed:' + csOf(t.replace(/^\[\s*\/Indexed\s*/, '')); return '?'; };
+  // images and their colour
+  R.images = []; Object.keys(byNum).forEach(n => { const d = byNum[n]; if (!/\/Subtype\s*\/Image\b/.test(d)) return; if (/\/ImageMask\s+true/.test(d)) return;
+    const w = +(d.match(/\/Width\s+(\d+)/) || [])[1], h = +(d.match(/\/Height\s+(\d+)/) || [])[1]; let cs = d.match(/\/ColorSpace\s*(\/\w+|\[[^\]]*\]|\d+\s+0\s+R)/); cs = cs ? csOf(cs[1]) : (/\/JPXDecode/.test(d) ? 'jpx' : '?');
+    if (w * h > 64) R.images.push({ n: +n, w, h, cs: cs.replace(/^indexed:/, ''), smask: /\/SMask/.test(d) }); });
+  // spot colours
+  const dec = x => x.replace(/#([0-9A-Fa-f]{2})/g, (a, h) => String.fromCharCode(parseInt(h, 16)));
+  const spots = new Set(); (D.match(/\/Separation\s*\/[^\s\/\[\]<>()]+/g) || []).forEach(x => { const nm = dec(x.replace(/\/Separation\s*\//, '')); if (!/^(All|None|Cyan|Magenta|Yellow|Black)$/i.test(nm)) spots.add(nm); });
+  (D.match(/\/DeviceN\s*\[[^\]]*\]/g) || []).forEach(x => (x.match(/\/[^\s\/\[\]]+/g) || []).slice(1).forEach(y => { const nm = dec(y.slice(1)); if (!/^(All|None|Cyan|Magenta|Yellow|Black)$/i.test(nm)) spots.add(nm); }));
+  R.spots = [...spots];
+  // named colour spaces used by the pages (resources)
+  R.csDefs = { rgb: 0, cmyk: 0, gray: 0, spot: 0, lab: 0 }; (D.match(/\/ColorSpace\s*<<[^>]*>>/g) || []).forEach(x => (x.match(/\/\w+\s*(\[[^\]]*\]|\d+\s+0\s+R|\/Device\w+)/g) || []).forEach(y => { const c = csOf(y.replace(/^\/\w+\s*/, '')); if (R.csDefs[c] != null) R.csDefs[c]++; }));
+  // fonts
+  R.fonts = []; Object.keys(byNum).forEach(n => { const d = byNum[n]; if (!/\/Type\s*\/FontDescriptor/.test(d)) return; const nm = dec((d.match(/\/FontName\s*\/([^\s\/\[\]<>]+)/) || [])[1] || '?'); R.fonts.push({ name: nm.replace(/^[A-Z]{6}\+/, ''), emb: /\/FontFile[23]?\s/.test(d) }); });
+  Object.keys(byNum).forEach(n => { const d = byNum[n]; if (!/\/Type\s*\/Font\b/.test(d) || !/\/Subtype\s*\/(Type1|TrueType|MMType1)\b/.test(d) || /\/FontDescriptor/.test(d)) return;
+    const nm = (d.match(/\/BaseFont\s*\/([^\s\/>\]]+)/) || [])[1]; if (nm && !R.fonts.some(f => f.name === nm)) R.fonts.push({ name: nm, emb: false, std: true }); });
+  // output intent / ICC name
+  R.intent = dec(((D.match(/\/OutputConditionIdentifier\s*\(([^)]*)\)/) || D.match(/\/OutputCondition\s*\(([^)]*)\)/) || [])[1] || '').trim());
+  // overprint
+  R.overprint = (D.match(/\/(OP|op)\s+true/g) || []).length;
+  // content streams: device colour operators, rich black, ink of vector colours
+  const usedF = new Set(); R.ops = { rgb: 0, cmyk: 0, gray: 0 }; R.richBlack = 0; R.richBlackText = 0; R.tacMax = 0; R.tacOver = 0; R.whiteOP = 0;
+  contents.forEach(t => {
+    const tok = t.match(/\[|\]|\/[^\s\/\[\]<>()]+|\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]*>|-?\d*\.?\d+|[A-Za-z'"*]+/g) || []; const st = [];
+    let inText = false, fill = null, fs = 12, sc = 1, lastName = null, curF = null;
+    for (const x of tok) {
+      if (/^-?\d*\.?\d+$/.test(x)) { st.push(+x); continue; }
+      if (x[0] === '/') { lastName = x.slice(1); continue; }
+      switch (x) {
+        case 'k': case 'K': { const [c, mm, y, kk] = st.slice(-4); R.ops.cmyk++; const tac = (c + mm + y + kk) * 100; R.tacMax = Math.max(R.tacMax, Math.round(tac)); if (tac > TACMAX + 0.5) R.tacOver++;
+          if (kk >= 0.95 && c + mm + y > 0.05) { R.richBlack++; if (x === 'k') fill = 'rich'; } else if (x === 'k') fill = 'cmyk'; break; }
+        case 'rg': case 'RG': R.ops.rgb++; if (x === 'rg') fill = 'rgb'; break;
+        case 'g': case 'G': R.ops.gray++; if (x === 'g') fill = 'gray'; break;
+        case 'BT': inText = true; sc = 1; break; case 'ET': inText = false; break;
+        case 'Tf': fs = Math.abs(st[st.length - 1] || 12); curF = lastName; break;
+        case 'Tm': sc = Math.hypot(st[st.length - 6] || 1, st[st.length - 5] || 0) || 1; break;
+        case 'Tj': case 'TJ': case "'": case '"': if (curF) usedF.add(curF); if (inText && fill === 'rich' && fs * sc < 12) R.richBlackText++; break;
+      }
+      if (/^[A-Za-z'"*]+$/.test(x)) st.length = 0;
+    }
+  });
+  // a standard font that only sits in the resources (never used with Tf) is not a problem
+  const fontRes = {}, isFont = n => /\/Type\s*\/Font\b/.test(byNum[n] || '');
+  (D.match(/\/[^\s\/<>\[\]()]+\s+\d+\s+0\s+R/g) || []).forEach(y => { const mm = y.match(/\/([^\s\/<>\[\]()]+)\s+(\d+)/); if (isFont(mm[2]) && !/^(DescendantFonts|FontDescriptor|ToUnicode|Font|Parent|Encoding|Widths|FontFile\d?)$/.test(mm[1])) fontRes[mm[2]] = mm[1]; });
+  R.fonts = R.fonts.filter(f => { if (!f.std) return true; const n = Object.keys(byNum).find(k => /\/Type\s*\/Font\b/.test(byNum[k]) && new RegExp('/BaseFont\\s*/' + f.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(byNum[k]));
+    const rn = n && fontRes[n]; return !rn || !contents.length || usedF.has(rn); });
+  R.vector = !R.images.length;
+  return R;
+}
+
+
 /* ---- paper bag in WebGL: real depth, light, one texture atlas for all pictures, round handles, soft shadow ---- */
 function _glBagProg(G) {
   if (G.bag) return G.bag;
