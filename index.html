@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
-<title>أضواء المستقبل — شكل الكيس 3D</title>
+<title>مصنع أضواء المستقبل للتصنيع — شكل الكيس 3D</title>
 <style>
 html,body{margin:0;height:100%;overflow:hidden;font-family:"Segoe UI",Tahoma,Arial,sans-serif;-webkit-user-select:none;user-select:none}
 body{background:linear-gradient(#f3f6f8,#c9d7e2);display:flex;flex-direction:column}
@@ -11,6 +11,7 @@ header{flex:none;display:flex;align-items:center;gap:10px;padding:8px 14px;backg
 header img{width:36px;height:36px;border-radius:8px;background:#fff}
 header b{font-size:17px}header small{display:block;font-size:12px;opacity:.85;font-weight:400}
 #stage{position:relative;flex:1;min-height:0}
+#info{flex:none;background:#fff8e8;color:#4a2a10;border-bottom:1px solid #e5d3a8;padding:7px 14px;font-size:14px;line-height:1.5}#info b{color:#6b1616}
 #cv{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab}
 .tools{position:absolute;top:10px;left:10px;display:flex;flex-direction:column;gap:8px;z-index:2}
 .tools button{width:44px;height:44px;border-radius:12px;border:1px solid rgba(0,0,0,.15);background:rgba(255,255,255,.9);color:#222;font-size:22px;line-height:1;cursor:pointer;box-shadow:0 1px 5px rgba(0,0,0,.18)}
@@ -20,7 +21,8 @@ header b{font-size:17px}header small{display:block;font-size:12px;opacity:.85;fo
 </style>
 </head>
 <body>
-<header><img id="lg" alt=""><div><b>أضواء المستقبل</b><small>عالم الطباعة والتغليف — شكل الكيس 3D</small></div></header>
+<header><img id="lg" alt=""><div><b>مصنع أضواء المستقبل للتصنيع</b><small>عالم الطباعة والتغليف — شكل الكيس 3D</small></div></header>
+<div id="info" hidden></div>
 <div id="stage"><canvas id="cv"></canvas>
 <div class="tools"><button id="zin" title="تكبير">+</button><button id="zout" title="تصغير">−</button><button id="home" title="رجّع الكيس لوضعه">⟲</button><button id="fs" title="ملء الشاشة">⛶</button></div>
 <div id="hint">اسحب بصباعك عشان تلف الكيس — وبصباعين للتكبير</div><div id="msg">بيحمّل...</div></div>
@@ -2371,6 +2373,17 @@ function _glDraw(V, items, W, H, dpr, size, dist, ctx) {
   return true;
 }
 
+// one line describing the bag for the customer (sizes in cm: width x gusset x height, handle, cards)
+const FACTORY_NAME = 'مصنع أضواء المستقبل للتصنيع';
+function bagSpec(I) {
+  if (!I || !(+I.L)) return '';
+  const cm = v => String(Math.round(+v) / 10).replace(/\.0$/, ''), b = (I && I.bag) || {}, c = b.card || {};
+  const hn = { twist: 'يد عادي (مبرومة)', flat: 'يد مجدول', rope: 'يد كرافت', ribbon: 'يد ريبون', none: 'من غير يد' }[I.handle || 'twist'] || '';
+  let t = cm(I.L) + ' × ' + cm(I.W) + ' × ' + cm(I.D) + ' سم — عرض × جنب × ارتفاع' + (hn ? ' — ' + hn : '');
+  if (c.on) { const n = Math.max(1, Math.round(+c.n || 1)); t += ' — ' + (n > 1 ? n + ' كروت' : 'كارت') + ' ' + cm(c.w || 100) + ' × ' + cm(c.h || 140) + ' سم' + (c.fold ? ' مطوي' : ''); }
+  if (b.base && b.base.on) t += ' — قاعدة تقوية';
+  return t;
+}
 /* ---- paper bag in WebGL: real depth, light, one texture atlas for all pictures, round handles, soft shadow ---- */
 function _glBagProg(G) {
   if (G.bag) return G.bag;
@@ -2643,7 +2656,7 @@ function Viewer3D(canvas) {
     return quads;
   };
   V.draw = () => {
-    const dpr = window.devicePixelRatio || 1, W = canvas.clientWidth, H = canvas.clientHeight;
+    const dpr = V.fixDpr || window.devicePixelRatio || 1, W = V.fixW || canvas.clientWidth, H = V.fixH || canvas.clientHeight;
     if (canvas.width !== Math.round(W * dpr) || canvas.height !== Math.round(H * dpr)) { canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr); }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H);
     if (V.bg && V.bg !== 'none') { if (V.bg === 'grad') { const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#f3f6f8'); g.addColorStop(1, '#c9d7e2'); ctx.fillStyle = g; } else ctx.fillStyle = V.bg; ctx.fillRect(0, 0, W, H); }
@@ -2775,6 +2788,7 @@ function Viewer3D(canvas) {
   const qs = new URLSearchParams(location.search), id = qs.get('v') || (location.hash || '').replace('#', '');
   if (!D && id) { msg('بيحمّل شكل الكيس...'); try { const r = await fetch(API + '?api=view&id=' + encodeURIComponent(id)); const j = await r.json(); D = j && j.ok ? j.data : null; } catch (e) {} }
   if (!D) { msg(id ? 'الرابط ده مش موجود أو اتشال — كلّم المندوب.' : 'الرابط ناقص.'); return; }
+  const sz = bagSpec(D.I); if (sz) { $('#info').textContent = ''; const b = document.createElement('b'); b.textContent = 'المقاس: '; $('#info').append(b, document.createTextNode(sz)); $('#info').hidden = false; }
   msg('بيجهّز التصميمات...');
   const imgs = {};
   await Promise.all(Object.keys(D.imgs || {}).map(k => new Promise(res => { const im = new Image(); im.onload = () => { imgs[k] = im; res(); }; im.onerror = res; im.src = D.imgs[k]; })));
