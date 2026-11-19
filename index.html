@@ -1621,6 +1621,15 @@ function dieSheetFor(R, m, I, part) {
 // Small 3D viewer (no libraries): folds the real panels of the blank along their creases.
 // Panels are rectangles in dieline coordinates (mm, X right, Y down). Each panel hangs on its
 // parent along one side ('L','R','T','B' = which side of THIS panel is the crease).
+// "keep its shape": a picture whose proportions differ from the wall goes in the middle, whole, with paper colour round it (no stretching)
+function fitPad(im, w, h, col) {
+  if (!im || !im.width || !(w > 0) || !(h > 0) || !fitPad.on) return im;
+  const ri = im.width / im.height, rt = w / h; if (Math.abs(ri / rt - 1) < 0.01) return im;
+  const c0 = fitPad.col || '#f4f1ea', key = w + 'x' + h + c0, C = im.__fit || (im.__fit = {}); if (C[key]) return C[key];
+  const S = Math.max(im.width, im.height), cw = rt >= 1 ? S : Math.round(S * rt), ch = rt >= 1 ? Math.round(S / rt) : S, c = document.createElement('canvas'); c.width = cw; c.height = ch;
+  const g = c.getContext('2d'); g.fillStyle = c0; g.fillRect(0, 0, cw, ch); const k = Math.min(cw / im.width, ch / im.height), dw = im.width * k, dh = im.height * k;
+  g.drawImage(im, (cw - dw) / 2, (ch - dh) / 2, dw, dh); return C[key] = c;
+}
 function panels3D(style, I, R) {
   const L = +I.L, W = +I.W, D = +I.D, t = R.t, P = [];
   const add = (id, x0, y0, x1, y1, parent, side, ang, s0, s1, extra) => P.push(Object.assign({ id, x0, y0, x1, y1, parent, side, ang, s0, s1 }, extra || {}));
@@ -1640,13 +1649,14 @@ function panels3D(style, I, R) {
     add('TK', x[2] + 2, y[0], x[3] - 2, y[1], 'LID', 'B', 90, .74, .84);
   } else if (style === '0201' || style === 'rte' || style === 'bag') {
     mode = 'stand';
-    const G = style === '0201' ? (t >= 1 ? 35 : 15) : style === 'rte' ? (t >= 1 ? 25 : 15) : 20;
-    const px = [G, G + L + t, G + L + W + 2 * t, G + 2 * L + W + 3 * t, G + 2 * L + 2 * W + 4 * t];
+    const obg = style === 'bag' ? bagOpt(I) : null, tt = style === 'bag' ? 0 : t;   // bag: exactly the die numbers (paper, no thickness allowance)
+    const G = style === '0201' ? (t >= 1 ? 35 : 15) : style === 'rte' ? (t >= 1 ? 25 : 15) : (obg.glue > 0 ? +obg.glue : 23);
+    const px = [G, G + L + tt, G + L + W + 2 * tt, G + 2 * L + W + 3 * tt, G + 2 * L + 2 * W + 4 * tt];
     Bw = px[4];
     let y0, y1;
     if (style === '0201') { const f = (W + t) / 2; y0 = f; y1 = f + D + t; Bh = y1 + f; }
     else if (style === 'rte') { const T = 15 + t; y0 = W + T; y1 = y0 + D + t; Bh = y1 + W + T; }
-    else { const ob = bagOpt(I), T = ob.turn > 0 ? +ob.turn : ((I.handle === 'none') ? 25 : 40), B = W / 2 + 15 + t; y0 = T; y1 = T + D; Bh = y1 + B; }
+    else { const ob = bagOpt(I), T = ob.turn > 0 ? +ob.turn : ((I.handle === 'none') ? 25 : 40), B = W / 2 + (ob.ovl > 0 ? +ob.ovl : 12); y0 = T; y1 = T + D; Bh = y1 + B; }
     add('P1', px[0], y0, px[1], y1);
     add('P2', px[1], y0, px[2], y1, 'P1', 'L', 90, 0, .45); add('P3', px[2], y0, px[3], y1, 'P2', 'L', 90, 0, .45); add('P4', px[3], y0, px[4], y1, 'P3', 'L', 90, 0, .45);
     add('GL', 0, y0 + 4, px[0], y1 - 4, 'P1', 'R', 90, 0, .3);
@@ -1666,7 +1676,7 @@ function panels3D(style, I, R) {
       add('BF', px[0], y1, px[1], Bh, 'P1', 'T', 90, .7, .85); add('BB', px[2], y1, px[3], Bh, 'P3', 'T', 90, .85, 1);
       const ob = bagOpt(I);
       if ((I.handle || 'twist') !== 'none') handles = { px, y0, L, type: I.handle || 'twist', gap: ob.holeGap > 0 ? +ob.holeGap : Math.round(L * 0.3777), hy: y0 * 1.5 };
-      bag = { px, y0, y1, L, W, D, card: ob.card && ob.card.on ? { w: +ob.card.w || 100, h: +ob.card.h || 140, fold: !!ob.card.fold, n: Math.max(1, Math.min(8, Math.round(+ob.card.n || 1))) } : null, base: ob.base && ob.base.on ? { m: +ob.base.margin || 0 } : null };
+      bag = { px, y0, y1, L, W, D, G, Hw: G + L + W, card: ob.card && ob.card.on ? { w: +ob.card.w || 100, h: +ob.card.h || 140, fold: !!ob.card.fold, n: Math.max(1, Math.min(8, Math.round(+ob.card.n || 1))) } : null, base: ob.base && ob.base.on ? { m: +ob.base.margin || 0 } : null };
     }
   } else {   // tray / lid & base
     const tray = (L2, W2, D2) => { const a = D2 + t, Lb = L2 + 2 * t, Wb = W2 + 2 * t, s = 1.5 + t; return { a, Lb, Wb, s, Bw: Lb + 2 * a, Bh: Wb + 2 * a, x0: a, x1: a + Lb, y0: a, y1: a + Wb }; };
@@ -3781,7 +3791,8 @@ function _glBag(V, Q, view, rot, cam, ctx) {
   const { gl, cv } = G, { W, H, dpr, size, dist, K } = cam, PW = Math.round(W * dpr), PH = Math.round(H * dpr);
   // texture atlas of every picture in use
   const imgs = []; Q.forEach(q => { [q.to, q.ti].forEach(x => { if (x && x.img && imgs.indexOf(x.img) < 0) imgs.push(x.img); }); });
-  const key = imgs.map(im => im.src ? im.src.length + ':' + im.src.slice(-24) : '?').join('|');
+  // every picture object gets its own number: two options with the same picture file are still two different textures
+  const key = imgs.map(im => im.__aid || (im.__aid = (_glBag.n = (_glBag.n || 0) + 1))).join('|');
   if (B.atlasKey !== key) {
     B.atlasKey = key; B.slots = new Map();
     const S = Math.min(2048, gl.getParameter(gl.MAX_TEXTURE_SIZE) || 2048), n = Math.max(1, imgs.length), cols = Math.ceil(Math.sqrt(n)), ss = Math.floor(S / cols), pad = 4;
@@ -3928,11 +3939,16 @@ function Viewer3D(canvas) {
         const pw = p.x1 - p.x0, ph = p.y1 - p.y0, own = (x, z) => [(x - p.x0) / pw, (z - p.y0) / ph], full = (x, z) => [x / Bw, z / Bh];
         let iO = null, uO = null, iI = null, uI = null;
         if (isBag) {
-          if (art.mode === 'flat') { if (art.flat) { iO = art.flat; uO = full; } }
-          else if (k === 0 && art.front) { iO = art.front; uO = own; }
-          else if (k === 2 && art.back) { iO = art.back; uO = own; }
-          else if ((tk === 0 && art.front) || (tk === 2 && art.back)) {   // turn-in flap: the face design carries on over the fold
-            const H = m.bag.y1 - m.bag.y0; iO = tk === 0 ? art.front : art.back; uO = (x, z) => [(x - p.x0) / pw, Math.min(1, (p.y1 - z) / H)]; }
+          const fF = art.front && fitPad(art.front, m.bag.L, m.bag.D), fB = art.back && fitPad(art.back, m.bag.L, m.bag.D);
+          if (art.mode === 'flat') {
+            if (art.flatHalf && art.flat) {   // half-die file (glue | front | gusset): first half, and the same (or the second file) on back + gusset
+              const Hw = m.bag.Hw, sh = m.bag.L + m.bag.W, second = p.x0 >= m.bag.px[2] - 0.5;
+              iO = second ? (art.flat2 || art.flat) : art.flat; uO = second ? (x, z) => [(x - sh) / Hw, z / Bh] : (x, z) => [x / Hw, z / Bh]; }
+            else if (art.flat) { iO = art.flat; uO = full; } }
+          else if (k === 0 && fF) { iO = fF; uO = own; }
+          else if (k === 2 && fB) { iO = fB; uO = own; }
+          else if ((tk === 0 && fF) || (tk === 2 && fB)) {   // turn-in flap: the face design carries on over the fold
+            const H = m.bag.y1 - m.bag.y0; iO = tk === 0 ? fF : fB; uO = (x, z) => [(x - p.x0) / pw, Math.min(1, (p.y1 - z) / H)]; }
           if (art.inside && tk < 0) { iI = art.inside; uI = (x, z) => [1 - x / Bw, z / Bh]; }
         } else if (!extra && V.img) { iO = V.img; uO = full; }
         const C4 = [[p.x0, p.y0], [p.x1, p.y0], [p.x1, p.y1], [p.x0, p.y1]], sub = [];
@@ -3947,7 +3963,8 @@ function Viewer3D(canvas) {
       });
       if (isBag && t > 0.9) bagExtras(m, Mof);
     };
-    const art = V.art || {}, isBag = !!m.bag, gus = m.bag ? (m.bag.W / 2) * Math.sin(0.5) * _ease((t - 0.7) / 0.3) : 0;
+    const art = V.art || {}; fitPad.on = !!art.fit; fitPad.col = V.outCol;
+    const isBag = !!m.bag, gus = m.bag ? (m.bag.W / 2) * Math.sin(0.5) * _ease((t - 0.7) / 0.3) : 0;
     const bil = (P4, u, v) => [0, 1, 2].map(k => (P4[0][k] * (1 - u) + P4[1][k] * u) * (1 - v) + (P4[3][k] * (1 - u) + P4[2][k] * u) * v);
     // a flat piece (card half, base board) as one item, with picture cells
     const piece = (P4, iO, fO, iI, fI, col, over, n) => { const sub = [];
