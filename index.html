@@ -3763,7 +3763,7 @@ function _glBagProg(G) {
   const gl = G.gl, sh = (t, s) => { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); if (!gl.getShaderParameter(o, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(o)); return o; };
   const vs = 'attribute vec3 aP;attribute vec3 aN;attribute vec3 aCO;attribute vec3 aCI;attribute vec4 aUV;attribute vec4 aF;attribute float aA;' +
     'uniform vec4 uC;varying vec3 vN;varying vec3 vCO;varying vec3 vCI;varying vec4 vUV;varying vec4 vF;varying float vA;' +
-    'void main(){float w=uC.w-aP.z;gl_Position=vec4(2.0*aP.x*uC.x/uC.y,2.0*aP.y*uC.x/uC.z,(-aP.z/(2.2*uC.w/2.2))*0.45*w,w);vN=aN;vCO=aCO;vCI=aCI;vUV=aUV;vF=aF;vA=aA;}';
+    'void main(){float w=uC.w-aP.z;gl_Position=vec4(2.0*aP.x*uC.x/uC.y,2.0*aP.y*uC.x/uC.z,(-aP.z/uC.w)*0.95*w,w);vN=aN;vCO=aCO;vCI=aCI;vUV=aUV;vF=aF;vA=aA;}';
   const fs = 'precision mediump float;varying vec3 vN;varying vec3 vCO;varying vec3 vCI;varying vec4 vUV;varying vec4 vF;varying float vA;uniform sampler2D uT;uniform float uFlip;' +
     'void main(){' +
     ' if(vF.z>8.5){float r=length(vUV.xy*2.0-1.0);float a=(1.0-smoothstep(0.35,1.0,r))*0.38;gl_FragColor=vec4(0.0,0.0,0.0,a);return;}' +
@@ -4011,15 +4011,17 @@ function Viewer3D(canvas) {
           const o0 = M4.ap(M, [(xa + xb) / 2, 0, b.y0]), o1 = M4.ap(M, [(xa + xb) / 2, 1, b.y0]);
           quads.push({ tube: true, pts: tp, w: tp, nrm: [o1[0] - o0[0], o1[1] - o0[1], o1[2] - o0[2]], col, mm, kind: hv.type });
           // inside the bag: the cord comes through the hole and ends in a plastic tip (cords) or a knot (ribbon); paper handles are glued, nothing shows
-          if (hv.type !== 'rope') [[tp[0], -1], [tp[tp.length - 1], 1]].forEach(([e, sx]) => {
+          if (hv.type !== 'rope') [[tp[0], -1], [tp[tp.length - 1], 1]].forEach(([e, sx], ei) => {
             const ex = (sx < 0 ? xa + (xb - xa) / 2 - Math.min(hv.gap / 2, (xb - xa) / 2 - 8) : xa + (xb - xa) / 2 + Math.min(hv.gap / 2, (xb - xa) / 2 - 8)), z = hv.hy;
             const nr = [o1[0] - o0[0], o1[1] - o0[1], o1[2] - o0[2]];
             if (hv.type === 'ribbon') { const k = [[ex, 1.5, z], [ex, -2, z], [ex + sx * 1.5, -5, z + 1.5], [ex + sx * 2, -6.5, z + 5]].map(q => M4.ap(M, q)); quads.push({ tube: true, pts: k, w: k, nrm: nr, col, mm: 12, kind: 'knot' }); return; }
-            const st = [[ex, 1.5, z], [ex, -1.2, z], [ex + sx * 0.8, -2.6, z + 2.5], [ex + sx * 2.2, -3.2, z + 6]], dx = sx * 0.42, dz = 0.91, L = 24;
-            const e0 = st[3], tip = []; for (let k = 0; k <= 4; k++) tip.push([e0[0] + dx * L * k / 4, e0[1] - 0.15 * k, e0[2] + dz * L * k / 4]);
+            // always inside: the cord goes through the hole, bends down along the inner side, and the tip hangs a little apart from the wall (never shows through it)
+            const vr = [0.38, 0.22, 0.3, 0.46][(id === 'P1' ? 0 : 2) + ei], ag = sx * vr, dx = Math.sin(ag), dz = Math.cos(ag), L = 27;
+            const st = [[ex, 1.5, z], [ex, -2.5, z], [ex + sx * 1.2, -6, z + 3], [ex + dx * 6, -8, z + 8]];
+            const e0 = st[3], tip = []; for (let k = 0; k <= 4; k++) tip.push([e0[0] + dx * L * k / 4, e0[1] - 0.6 * k, e0[2] + dz * L * k / 4]);
             const sw = st.map(q => M4.ap(M, q)), tw = tip.map(q => M4.ap(M, q));
             quads.push({ tube: true, pts: sw, w: sw, nrm: nr, col, mm, kind: hv.type });
-            quads.push({ tube: true, pts: tw, w: tw, nrm: nr, col: V.tipCol === 'hand' ? col : V.tipCol || '#161616', mm: mm + 1.6, kind: 'tip', cap: true });
+            quads.push({ tube: true, pts: tw, w: tw, nrm: nr, col: V.tipCol === 'hand' ? col : V.tipCol || '#161616', mm: mm + 1.1, kind: 'tip', cap: true });
           });
         });
       }
