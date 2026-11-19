@@ -1073,12 +1073,20 @@ function dieTray2(L, W, D, t) {
 
 
 // Paper bag (SOS bottom): glue | front L | gusset W | back L | gusset W ; top turn T, body D, bottom W/2 + 15
-const HANDLES = { twist: 'يد عادي', flat: 'يد مجدول', rope: 'يد كرافت', ribbon: 'يد ريبون', none: 'من غير يد' };
+const HANDLES = { twist: 'يد عادي', flat: 'يد مجدول', rope: 'يد كرافت', ribbon: 'يد ريبون', tape: 'يد شريط ورق', diecut: 'يد مقصوصة', none: 'من غير يد' };
+const CORD_H = h => /^(twist|flat|rope|ribbon)$/.test(h || 'twist');   // handles through holes
+const defTurn = h => h === 'none' ? 25 : h === 'diecut' ? 60 : 40;     // die-cut handles need a deep turn (both layers round the slot)
+// handle (+ eyelets) cost per 1000 bags; null = a price that is not entered yet
+function bagHandleK(C, h, o){ const k = { twist: 'handleTwistK', flat: 'handleFlatK', rope: 'handleRopeK', ribbon: 'handleRibbonK', tape: 'handleTapeK', diecut: 'handleDiecutK' }[h];
+  let v = k ? +C[k] || 0 : 0; if (o && o.eyelet && CORD_H(h)) v += +C.eyeletK || 0; return v; }
+function bagPriceGaps(C, I){ const h = I.handle || 'twist', o = bagOpt(I), miss = [];
+  if (h === 'tape' && !(+C.handleTapeK > 0)) miss.push('يد الشريط الورق'); if (h === 'diecut' && !(+C.handleDiecutK > 0)) miss.push('اليد المقصوصة');
+  if (o.eyelet && CORD_H(h) && !(+C.eyeletK > 0)) miss.push('الحلق المعدن'); return miss; }
 function dieBag(L, W, D, t, handle, o) {
   // SOS paper bag (like the factory die): glue | front | gusset | back | gusset, or one half = glue | front | gusset.
   // Height: top turn T | body D | bottom W/2 + overlap. Paper: no thickness allowance.
   o = o || {};
-  const G = o.glue > 0 ? +o.glue : 23, T = o.turn > 0 ? +o.turn : (handle === 'none' ? 25 : 40), ov = o.ovl > 0 ? +o.ovl : 12;
+  const G = o.glue > 0 ? +o.glue : 23, T = o.turn > 0 ? +o.turn : defTurn(handle), ov = o.ovl > 0 ? +o.ovl : 12;
   const B = W / 2 + ov, P = [];
   const sEnd = o.half ? L + W : 2 * L + 2 * W, Bw = G + sEnd, Bh = T + D + B, yT = T, yB = T + D, yA = yB - W / 2;
   const X = sv => G + sv;   // circumference s (0 = front starts) -> blank x
@@ -1097,7 +1105,13 @@ function dieBag(L, W, D, t, handle, o) {
     if (dmax - dmin > 0.5) P.push(_ln(false, X(c + sg * dmin), yA + dmin, X(c + sg * dmax), yA + dmax));
   })));
   const faces = o.half ? [[0, L]] : [[0, L], [L + W, 2 * L + W]];
-  if (handle && handle !== 'none') {   // every handle: 2 holes in the turn + 2 in the wall, mirrored on the turn fold so they meet when it folds in
+  if (handle === 'diecut') {   // die-cut handle: a rounded slot in the wall, and the same slot in the turn (mirrored on its fold) so both layers open together
+    const sw = o.slotW > 0 ? +o.slotW : 90, sh = o.slotH > 0 ? +o.slotH : 30, st = o.slotTop > 0 ? +o.slotTop : 20, rr = sh / 2;
+    const slot = (cx, ya, yb) => { const q = [], cy = (ya + yb) / 2, hh = (yb - ya) / 2; for (let k2 = 0; k2 <= 12; k2++) { const a2 = -Math.PI / 2 + k2 / 12 * Math.PI; q.push([cx + sw / 2 - rr + rr * Math.cos(a2), cy + hh * Math.sin(a2)]); }
+      for (let k2 = 0; k2 <= 12; k2++) { const a2 = Math.PI / 2 + k2 / 12 * Math.PI; q.push([cx - sw / 2 + rr + rr * Math.cos(a2), cy + hh * Math.sin(a2)]); } return _pl(true, q, true); };
+    faces.forEach(([a1, b1]) => { const m = X((a1 + b1) / 2); P.push(slot(m, T + st, T + st + sh)); const ya = Math.max(0, T - st - sh), yb = T - st; if (yb - ya > 2) P.push(slot(m, ya, yb)); });
+  }
+  if (CORD_H(handle)) {   // cord handles: 2 holes in the turn + 2 in the wall, mirrored on the turn fold so they meet when it folds in
     const gap = o.holeGap > 0 ? +o.holeGap : Math.round(L * 0.3777), r = (o.holeD > 0 ? +o.holeD : 6) / 2;
     const ring = (cx, cy) => { const q = []; for (let k2 = 0; k2 < 16; k2++) { const a2 = k2 / 16 * Math.PI * 2; q.push([cx + r * Math.cos(a2), cy + r * Math.sin(a2)]); } return _pl(true, q, true); };
     faces.forEach(([a1, b1]) => { const m = (a1 + b1) / 2; [m - gap / 2, m + gap / 2].forEach(sv => [T / 2, T + T / 2].forEach(yy => P.push(ring(X(sv), yy)))); });
@@ -1301,7 +1315,7 @@ const BAG_DEF = { split: 'auto', turn: 40, glue: 23, ovl: 12, place: 'auto', glu
   card: { on: false, w: 100, h: 140, fold: true, hole: 'mid', holeOff: 10, holeD: 6, n: 1, same: true, paper: '', gsm: 0, colF: null, colB: null, fin: {} } };
 function bagOpt(I) {
   const b = (I && I.bag) || {}, d = JSON.parse(JSON.stringify(BAG_DEF));
-  ['split', 'turn', 'glue', 'ovl', 'place', 'glueGrip', 'holeGap', 'holeD'].forEach(k => { if (b[k] != null && b[k] !== '') d[k] = b[k]; });
+  ['split', 'turn', 'glue', 'ovl', 'place', 'glueGrip', 'holeGap', 'holeD', 'eyelet', 'slotW', 'slotH', 'slotTop'].forEach(k => { if (b[k] != null && b[k] !== '') d[k] = b[k]; });
   ['base', 'card'].forEach(k => Object.assign(d[k], b[k] || {}));
   if (!d.card.setCol && +d.card.colF === 4 && +d.card.colB === 4) { d.card.colF = null; d.card.colB = null; }
   // where each piece goes: auto / bag (bag sheet) / base (card only: in the base's sheet) / sep (own sheet)
@@ -1350,7 +1364,7 @@ function calcBag(P, I) {
   const body = half => {
     const d = dieBag(L, W, D, t, h, Object.assign({}, o, { half })), sp = _lenSplit(d.paths);
     const geo = { Bw: d.w, Bh: d.h, ruleUp: _lenOf(d.paths) / 1000, cutUp: sp.cut, creaseUp: sp.crease, glue: 0, noDie: false, gripExt: o.glueGrip ? +o.glue || 0 : 0, sideExt: !!o.glueGrip,
-      extraK: (+C.bagMakeK || 0) + (h === 'twist' ? +C.handleTwistK || 0 : h === 'flat' ? +C.handleFlatK || 0 : h === 'rope' ? +C.handleRopeK || 0 : h === 'ribbon' ? +C.handleRibbonK || 0 : 0) + (half ? +C.bagSplitK || 0 : 0) };
+      extraK: (+C.bagMakeK || 0) + bagHandleK(C, h, o) + (half ? +C.bagSplitK || 0 : 0) };
     return Object.assign(calc0427(P, Object.assign({}, I, { geo, ear: 0, pcs: half ? 2 : 1, _half: half })), { die1: d });
   };
   let split = o.split === 'two';
@@ -1405,7 +1419,7 @@ function calcBag(P, I) {
       return { n: 0, ew: 0, eh: 0, pl: [], knifeCut: 0, knifeCrease: 0 };
     };
     const geo = { Bw: piece.w, Bh: piece.h, glue: 0, noDie: false, ruleUp: 0, cutUp: 0, creaseUp: 0, nestFor, setNest: true, sideExt: !!o.glueGrip,
-      extraK: (+C.bagMakeK || 0) + (h === 'twist' ? +C.handleTwistK || 0 : h === 'flat' ? +C.handleFlatK || 0 : h === 'rope' ? +C.handleRopeK || 0 : h === 'ribbon' ? +C.handleRibbonK || 0 : 0) + (split ? +C.bagSplitK || 0 : 0) + ex.reduce((a, e) => a + e.k * e.n, 0) };
+      extraK: (+C.bagMakeK || 0) + bagHandleK(C, h, o) + (split ? +C.bagSplitK || 0 : 0) + ex.reduce((a, e) => a + e.k * e.n, 0) };
     const aF = Math.max(+I.colF || 0, ...ex.map(e => e.colF)), aB = Math.max(+I.colB || 0, ...ex.map(e => e.colB));
     ex.forEach(e => { e.sheetF = aF; e.sheetB = aB; e.upPrint = aF > (+I.colF || 0) || aB > (+I.colB || 0); });
     const A = calc0427(P, Object.assign({}, I, { geo, ear: 0, pcs: 1, _half: split, colF: aF, colB: aB }));
@@ -1577,7 +1591,7 @@ function calcBox(P, I) {
     if (style === 'bag') {   // bags: guillotine cut (no die), making + handles per 1000 bags
       const C = P.consts, h = I.handle || 'twist';
       geo.noDie = true; geo.glue = 0;
-      geo.extraK = (+C.bagMakeK || 0) + (h === 'twist' ? +C.handleTwistK || 0 : h === 'flat' ? +C.handleFlatK || 0 : h === 'rope' ? +C.handleRopeK || 0 : h === 'ribbon' ? +C.handleRibbonK || 0 : 0);
+      geo.extraK = (+C.bagMakeK || 0) + bagHandleK(C, h, bagOpt(I));
     }
     return calc0427(P, Object.assign({}, I, over || {}, { L, W, D, geo, ear: 0 }));
   };
@@ -1669,7 +1683,7 @@ function panels3D(style, I, R) {
     let y0, y1;
     if (style === '0201') { const f = (W + t) / 2; y0 = f; y1 = f + D + t; Bh = y1 + f; }
     else if (style === 'rte') { const T = 15 + t; y0 = W + T; y1 = y0 + D + t; Bh = y1 + W + T; }
-    else { const ob = bagOpt(I), T = ob.turn > 0 ? +ob.turn : ((I.handle === 'none') ? 25 : 40), B = W / 2 + (ob.ovl > 0 ? +ob.ovl : 12); y0 = T; y1 = T + D; Bh = y1 + B; }
+    else { const ob = bagOpt(I), T = ob.turn > 0 ? +ob.turn : defTurn(I.handle || 'twist'), B = W / 2 + (ob.ovl > 0 ? +ob.ovl : 12); y0 = T; y1 = T + D; Bh = y1 + B; }
     add('P1', px[0], y0, px[1], y1);
     add('P2', px[1], y0, px[2], y1, 'P1', 'L', 90, 0, .45); add('P3', px[2], y0, px[3], y1, 'P2', 'L', 90, 0, .45); add('P4', px[3], y0, px[4], y1, 'P3', 'L', 90, 0, .45);
     add('GL', 0, y0 + 4, px[0], y1 - 4, 'P1', 'R', 90, 0, .3);
@@ -1688,8 +1702,9 @@ function panels3D(style, I, R) {
       add('BG1', px[1], y1, px[2], Bh, 'P2', 'T', 90, .55, .7); add('BG2', px[3], y1, px[4], Bh, 'P4', 'T', 90, .55, .7);
       add('BF', px[0], y1, px[1], Bh, 'P1', 'T', 90, .7, .85); add('BB', px[2], y1, px[3], Bh, 'P3', 'T', 90, .85, 1);
       const ob = bagOpt(I);
-      if ((I.handle || 'twist') !== 'none') handles = { px, y0, L, type: I.handle || 'twist', gap: ob.holeGap > 0 ? +ob.holeGap : Math.round(L * 0.3777), hy: y0 * 1.5 };
-      bag = { px, y0, y1, L, W, D, G, Hw: G + L + W, card: ob.card && ob.card.on ? { w: +ob.card.w || 100, h: +ob.card.h || 140, fold: !!ob.card.fold, hole: { pos: ob.card.hole || 'mid', off: +ob.card.holeOff || 10, d: +ob.card.holeD || 6 }, n: Math.max(1, Math.min(8, Math.round(+ob.card.n || 1))) } : null, base: ob.base && ob.base.on ? { m: +ob.base.margin || 0 } : null };
+      const ht = I.handle || 'twist';
+      if (CORD_H(ht) || ht === 'tape') handles = { px, y0, L, type: ht, gap: ob.holeGap > 0 ? +ob.holeGap : Math.round(L * 0.3777), hy: ht === 'tape' ? y0 * 0.6 : y0 * 1.5, holeD: ob.holeD > 0 ? +ob.holeD : 6, eyelet: CORD_H(ht) ? ob.eyelet || '' : '' };
+      bag = { px, y0, y1, L, W, D, G, Hw: G + L + W, slot: ht === 'diecut' ? { w: +ob.slotW || 90, h: +ob.slotH || 30, top: +ob.slotTop || 20 } : null, card: ob.card && ob.card.on ? { w: +ob.card.w || 100, h: +ob.card.h || 140, fold: !!ob.card.fold, hole: { pos: ob.card.hole || 'mid', off: +ob.card.holeOff || 10, d: +ob.card.holeD || 6 }, n: Math.max(1, Math.min(8, Math.round(+ob.card.n || 1))) } : null, base: ob.base && ob.base.on ? { m: +ob.base.margin || 0 } : null };
     }
   } else {   // tray / lid & base
     const tray = (L2, W2, D2) => { const a = D2 + t, Lb = L2 + 2 * t, Wb = W2 + 2 * t, s = 1.5 + t; return { a, Lb, Wb, s, Bw: Lb + 2 * a, Bh: Wb + 2 * a, x0: a, x1: a + Lb, y0: a, y1: a + Wb }; };
@@ -2410,7 +2425,7 @@ const FACTORY_NAME = 'مصنع أضواء المستقبل للتصنيع';
 function bagSpec(I) {
   if (!I || !(+I.L)) return '';
   const cm = v => String(Math.round(+v) / 10).replace(/\.0$/, ''), b = (I && I.bag) || {}, c = b.card || {};
-  const hn = { twist: 'يد عادي (مبرومة)', flat: 'يد مجدول', rope: 'يد كرافت', ribbon: 'يد ريبون', none: 'من غير يد' }[I.handle || 'twist'] || '';
+  const hn = ({ twist: 'يد عادي (مبرومة)', flat: 'يد مجدول', rope: 'يد كرافت', ribbon: 'يد ريبون', tape: 'يد شريط ورق', diecut: 'يد مقصوصة', none: 'من غير يد' }[I.handle || 'twist'] || '') + (b.eyelet && CORD_H(I.handle) ? ' + حلق معدن' : '');
   let t = cm(I.L) + ' × ' + cm(I.W) + ' × ' + cm(I.D) + ' سم — عرض × جنب × ارتفاع' + (hn ? ' — ' + hn : '');
   if (c.on) { const n = Math.max(1, Math.round(+c.n || 1)); t += ' — ' + (n > 1 ? n + ' كروت' : 'كارت') + ' ' + cm(c.w || 100) + ' × ' + cm(c.h || 140) + ' سم' + (c.fold ? ' مطوي' : ''); }
   if (b.base && b.base.on) t += ' — قاعدة تقوية';
@@ -3979,7 +3994,15 @@ function Viewer3D(canvas) {
           if (art.inside && tk < 0) { iI = art.inside; uI = (x, z) => [1 - x / Bw, z / Bh]; }
         } else if (!extra && V.img) { iO = V.img; uO = full; }
         const C4 = [[p.x0, p.y0], [p.x1, p.y0], [p.x1, p.y1], [p.x0, p.y1]], sub = [];
-        if (iO || iI || disp) {   // small cells only to keep the picture straight in perspective (and to bend the gusset); the panel itself is one piece
+        const sl = isBag && m.bag.slot && (k === 0 || k === 2 || tk === 0 || tk === 2) ? (() => { const S2 = m.bag.slot, cx = (p.x0 + p.x1) / 2, y0b = m.bag.y0;
+          return tk >= 0 ? { cx, ya: y0b - S2.top - S2.h, yb: y0b - S2.top, w: S2.w } : { cx, ya: y0b + S2.top, yb: y0b + S2.top + S2.h, w: S2.w }; })() : null;
+        if (sl) {   // die-cut handle: cells round the slot, none inside it
+          const r2 = (sl.yb - sl.ya) / 2, cy = (sl.ya + sl.yb) / 2, inS = (x, z) => { const dx = Math.max(0, Math.abs(x - sl.cx) - (sl.w / 2 - r2)); return dx * dx + (z - cy) * (z - cy) < r2 * r2; };
+          const lines = (a, b, n, f0, f1) => { const L2 = []; for (let i = 0; i <= n; i++) L2.push(a + (b - a) * i / n); for (let v = f0; v <= f1; v += 2.5) if (v > a && v < b) L2.push(v); return [...new Set(L2.map(v => Math.round(v * 100) / 100))].sort((u, w) => u - w); };
+          const xs = lines(p.x0, p.x1, 6, sl.cx - sl.w / 2 - 2, sl.cx + sl.w / 2 + 2), zs = lines(p.y0, p.y1, 6, sl.ya - 2, sl.yb + 2);
+          for (let i = 0; i + 1 < xs.length; i++) for (let j = 0; j + 1 < zs.length; j++) { const X0 = xs[i], X1 = xs[i + 1], Z0 = zs[j], Z1 = zs[j + 1]; if (inS((X0 + X1) / 2, (Z0 + Z1) / 2)) continue;
+            const pts = [[X0, Z0], [X1, Z0], [X1, Z1], [X0, Z1]]; sub.push({ w: pts.map(([x, z]) => WP(x, z)), o: iO ? pts.map(([x, z]) => uO(x, z)) : null, i: iI ? pts.map(([x, z]) => uI(x, z)) : null }); } }
+        else if (iO || iI || disp) {   // small cells only to keep the picture straight in perspective (and to bend the gusset); the panel itself is one piece
           let nx = Math.max(1, Math.min(6, Math.round(pw / 45))), nz = Math.max(1, Math.min(6, Math.round(ph / 45))); if (disp) { nx = Math.max(2, nx + (nx % 2)); nz = Math.max(nz, tk >= 0 ? 1 : 6); }
           for (let i = 0; i < nx; i++) for (let j = 0; j < nz; j++) {
             const X0 = p.x0 + pw * i / nx, X1 = p.x0 + pw * (i + 1) / nx, Z0 = p.y0 + ph * j / nz, Z1 = p.y0 + ph * (j + 1) / nz, pts = [[X0, Z0], [X1, Z0], [X1, Z1], [X0, Z1]];
@@ -4019,23 +4042,30 @@ function Viewer3D(canvas) {
           const cr = hv ? ({ twist: 4.5, flat: 7, rope: 6, ribbon: 16 }[hv.type] || 5) / 2 : 2, offH = b.card.hole && b.card.hole.off > 0 ? +b.card.hole.off : 10;
           const thrB = (dir === 'h' ? offH * (Math.sin(phi) + 0.35) : dir === 'v' ? offH * Math.sin(th) : 0) + cr + 1.2, thrF = cr + 1.2;
           cards.push({ i, iF, iB, dir, Lg, Sh, th, phi, cr, thrB, thrF, back: strand >= 2, a0: Math.PI * (strand % 2 === 0 ? 0.2 + 0.1 * round : 0.8 - 0.1 * round), bul: dir === 'v' ? 2 + (Lg / 2 - 8) * Math.sin(th) : dir === 'h' ? 9 : 6 }); } }
-      const tall = hv && hv.type === 'ribbon' ? 1.25 : 1.05, clr = hv ? ({ twist: 4.5, flat: 7, rope: 6 }[hv.type] || 2) / 2 + 1 : 1.5;   // the cord runs just off the wall, never half inside it
+      const tall = hv && hv.type === 'ribbon' ? 1.25 : 1.05, clr = hv ? (hv.type === 'tape' ? -2.4 : ({ twist: 4.5, flat: 7, rope: 6 }[hv.type] || 2) / 2 + 1) : 1.5;   // paper tape: glued inside, comes up over the edge   // the cord runs just off the wall, never half inside it
       const arc = (xa, xb, a, bumps) => { const xc = (xa + xb) / 2, hw = Math.min(hv.gap / 2, (xb - xa) / 2 - 8), up = Math.max(hw * tall, 45), y = hv.hy;
         let bump = 0, thr = 0; (bumps || []).forEach(c => { const g = Math.exp(-Math.pow((a - c.a0) / 0.26, 2)); bump = Math.max(bump, c.bul * g);
           if (c.thrF != null) { const sg = Math.tanh((a - c.a0) / 0.045); thr += (sg < 0 ? -c.thrB : c.thrF) * Math.abs(sg) * g; } });
         bump += thr;
         return [xc - hw * Math.cos(a), clr + Math.sin(a) * 2 + bump, y - (y - b.y0 + up) * Math.pow(Math.sin(a), 0.85)]; };
       if (hv) {
-        const def = { twist: '#e8e0cc', flat: '#d9c7a3', rope: '#a57c52', ribbon: '#b3262e' }[hv.type] || '#a57c52', col = V.handleCol || def;
-        const mm = { twist: 4.5, flat: 7, rope: 6, ribbon: 16 }[hv.type] || 5;
+        const def = { twist: '#e8e0cc', flat: '#d9c7a3', rope: '#a57c52', ribbon: '#b3262e', tape: '#d8c39c' }[hv.type] || '#a57c52', col = V.handleCol || def;
+        const mm = { twist: 4.5, flat: 7, rope: 6, ribbon: 16, tape: 15 }[hv.type] || 5;
         [['P1', px[0], px[1], M1, cards.filter(c => !c.back)], ['P3', px[2], px[3], M3, cards.filter(c => c.back)]].forEach(([id, xa, xb, M, bul]) => {
           const pts = []; for (let k = 0; k <= 20; k++) pts.push(M4.ap(M, arc(xa, xb, Math.PI * k / 20, bul)));
           for (let k = 0; k < 20; k++) quads.push({ line: true, w: [pts[k], pts[k + 1]], col, mm, kind: hv.type, k, over: { id, side: 'out', rank: 1.5, soft: true } });
           const tp = [], NS = bul.length ? 220 : 64; for (let k = 0; k <= NS; k++) tp.push(M4.ap(M, arc(xa, xb, Math.PI * k / NS, bul)));   // fine steps where it goes through a card
           const o0 = M4.ap(M, [(xa + xb) / 2, 0, b.y0]), o1 = M4.ap(M, [(xa + xb) / 2, 1, b.y0]);
-          quads.push({ tube: true, pts: tp, w: tp, nrm: [o1[0] - o0[0], o1[1] - o0[1], o1[2] - o0[2]], col, mm, kind: hv.type });
+          quads.push({ tube: true, pts: tp, w: tp, nrm: [o1[0] - o0[0], o1[1] - o0[1], o1[2] - o0[2]], col, mm, kind: hv.type === 'tape' ? 'ribbon' : hv.type });
+          if (hv.type === 'tape') {   // the glued ends: a short flat strip down the inside of the turn
+            [xa + (xb - xa) / 2 - Math.min(hv.gap / 2, (xb - xa) / 2 - 8), xa + (xb - xa) / 2 + Math.min(hv.gap / 2, (xb - xa) / 2 - 8)].forEach(ex => { const g2 = [[ex, clr, hv.hy], [ex, clr, hv.hy + 22]].map(q => M4.ap(M, q)); quads.push({ tube: true, pts: g2, w: g2, nrm: [o1[0] - o0[0], o1[1] - o0[1], o1[2] - o0[2]], col, mm, kind: 'ribbon' }); }); }
+          if (hv.eyelet) {   // metal eyelets round the holes, outside and on the turn inside
+            const ec = { silver: '#c9ccd3', gold: '#d4af37', black: '#2a2a2a' }[hv.eyelet] || '#c9ccd3', er = (hv.holeD || 6) / 2 + 1.3;
+            [xa + (xb - xa) / 2 - Math.min(hv.gap / 2, (xb - xa) / 2 - 8), xa + (xb - xa) / 2 + Math.min(hv.gap / 2, (xb - xa) / 2 - 8)].forEach(ex => [0.7, -1.6].forEach(yy => {
+              const rp = []; for (let k = 0; k <= 20; k++) { const a = k / 20 * Math.PI * 2; rp.push(M4.ap(M, [ex + er * Math.cos(a), yy, hv.hy + er * Math.sin(a)])); }
+              quads.push({ tube: true, pts: rp, w: rp, nrm: [o1[0] - o0[0], o1[1] - o0[1], o1[2] - o0[2]], col: ec, mm: 1.8, kind: 'tip' }); })); }
           // inside the bag: the cord comes through the hole and ends in a plastic tip (cords) or a knot (ribbon); paper handles are glued, nothing shows
-          if (hv.type !== 'rope') [[tp[0], -1], [tp[tp.length - 1], 1]].forEach(([e, sx], ei) => {
+          if (CORD_H(hv.type) && hv.type !== 'rope') [[tp[0], -1], [tp[tp.length - 1], 1]].forEach(([e, sx], ei) => {
             const ex = (sx < 0 ? xa + (xb - xa) / 2 - Math.min(hv.gap / 2, (xb - xa) / 2 - 8) : xa + (xb - xa) / 2 + Math.min(hv.gap / 2, (xb - xa) / 2 - 8)), z = hv.hy;
             const q0 = M4.ap(M, [0, 0, 0]), q1 = M4.ap(M, [1, 0, 0]), nr = [q1[0] - q0[0], q1[1] - q0[1], q1[2] - q0[2]];   // along the wall: never parallel to a cord going through it
             // the hole: a small dark ring round the cord, through the wall and the turn-in behind it
