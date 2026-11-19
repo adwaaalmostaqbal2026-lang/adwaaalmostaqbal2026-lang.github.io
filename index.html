@@ -3777,6 +3777,8 @@ function _glBagProg(G) {
     ' else if(vF.z>1.5&&vF.z<2.5){c*=0.72+0.36*(0.5+0.5*sin(vF.w*0.55+vA*2.0));}' +
     ' else if(vF.z>2.5&&vF.z<3.5){float b=abs(sin(vF.w*0.7+vA*2.0))*abs(sin(vF.w*0.7-vA*2.0));c*=0.7+0.45*b;sp=0.1;}' +
     ' else if(vF.z>3.5&&vF.z<4.5){c*=1.0-0.18*vA*vA;sp=0.55;}' +
+    ' else if(vF.z>4.5&&vF.z<5.5){sp=0.7;}' +
+    ' else if(vF.z>5.5&&vF.z<6.5){c*=0.8+0.3*(0.5+0.5*sin(vA*3.0+vF.w*1.3));sp=0.3;}' +
     ' if(vF.z>0.5){vec3 R=reflect(-L,n);sp*=pow(max(R.z,0.0),18.0);}' +
     ' gl_FragColor=vec4(c*(amb+0.55*d)+vec3(sp),1.0);}';
   const pr = gl.createProgram(); gl.attachShader(pr, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(pr);
@@ -3819,7 +3821,7 @@ function _glBag(V, Q, view, rot, cam, ctx) {
   Q.forEach(q => {
     if (q.line || q.edge) return;
     if (q.tube) {   // handle: a round cord (or a flat ribbon) along the arc
-      const P = q.pts.map(view), N = rot(q.nrm), col = rgb(q.col), r = q.mm / 2, mode = { twist: 1, rope: 2, flat: 3, ribbon: 4 }[q.kind] || 1;
+      const P = q.pts.map(view), N = rot(q.nrm), col = rgb(q.col), r = q.mm / 2, mode = { twist: 1, rope: 2, flat: 3, ribbon: 4, tip: 5, knot: 6 }[q.kind] || 1;
       const seg = mode === 4 ? 6 : 10, len = []; let s = 0; P.forEach((p, i) => { if (i) s += Math.hypot(...sub3(p, P[i - 1])); len.push(s); });
       const ring = i => { const T = nrm(sub3(P[Math.min(P.length - 1, i + 1)], P[Math.max(0, i - 1)])), B1 = nrm(cross(T, N)), N1 = cross(B1, T); return { B1, N1 }; };
       for (let i = 0; i + 1 < P.length; i++) { const f0 = ring(i), f1 = ring(i + 1);
@@ -3828,6 +3830,9 @@ function _glBag(V, Q, view, rot, cam, ctx) {
         for (let j = 0; j < seg; j++) { const A = pt(j, f0, P[i]), Bq = pt(j + 1, f0, P[i]), C = pt(j + 1, f1, P[i + 1]), D = pt(j, f1, P[i + 1]);
           [[A, len[i]], [Bq, len[i]], [C, len[i + 1]], [A, len[i]], [C, len[i + 1]], [D, len[i + 1]]].forEach(([v, L]) => push(data, v.p, v.n, col, col, [0, 0], [0, 0], [0, 0, mode, L], v.a)); }
       }
+      if (q.cap) [[0, 1], [P.length - 1, P.length - 2]].forEach(([i, j]) => { const f0 = ring(i), T = nrm(sub3(P[i], P[j]));   // closed rounded-off end
+        for (let jj = 0; jj < 10; jj++) { const a0 = jj / 10 * Math.PI * 2, a1 = (jj + 1) / 10 * Math.PI * 2, rim = a => P[i].map((v, k) => v + (f0.B1[k] * Math.cos(a) + f0.N1[k] * Math.sin(a)) * r * 0.85 + T[k] * r * 0.35);
+          [P[i].map((v, k) => v + T[k] * r * 0.6), rim(a0), rim(a1)].forEach(v => push(data, v, T, col, col, [0, 0], [0, 0], [0, 0, mode, 0], 0)); } });
       return;
     }
     const Pv = q.w.map(view); Pv.forEach(p => { for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], p[k]); mx[k] = Math.max(mx[k], p[k]); } });
@@ -3934,7 +3939,10 @@ function Viewer3D(canvas) {
         if (isBag && gus > 0) { const sid = (k === 1 || k === 3) ? p.id : tk === 1 ? 'P2' : tk === 3 ? 'P4' : null;
           if (sid) { const Mp = sid === p.id ? M : Mof[sid], a0 = M4.ap(Mp, [0, 0, 0]), a1 = M4.ap(Mp, [0, -1, 0]), inw = [a1[0] - a0[0], a1[1] - a0[1], a1[2] - a0[2]];
             const xm = (p.x0 + p.x1) / 2, hw = (p.x1 - p.x0) / 2, yt = m.bag.y0, yb = m.bag.y1;
-            disp = (x, z) => { const d = gus * Math.max(0, 1 - Math.abs(x - xm) / hw) * (tk >= 0 ? 1 : Math.max(0, Math.min(1, (yb - z) / (yb - yt)))); return [inw[0] * d, inw[1] * d, inw[2] * d]; }; } }
+            disp = (x, z) => { const d = gus * Math.max(0, 1 - Math.abs(x - xm) / hw) * (tk >= 0 ? 1 : Math.max(0, Math.min(1, (yb - z) / (yb - yt)))); return [inw[0] * d, inw[1] * d, inw[2] * d]; }; }
+          else if (p.id === 'GL' && Mof.P4) {   // glue flap: stuck inside the last gusset near its edge, so it bends in with it (and never shows through it)
+            const a0 = M4.ap(Mof.P4, [0, 0, 0]), a1 = M4.ap(Mof.P4, [0, -1, 0]), inw = [a1[0] - a0[0], a1[1] - a0[1], a1[2] - a0[2]], hw = m.bag.W / 2, yt = m.bag.y0, yb = m.bag.y1, G0 = p.x1;
+            disp = (x, z) => { const d = gus * Math.min(1, (G0 - x) / hw) * Math.max(0, Math.min(1, (yb - z) / (yb - yt))) + 0.8 * _ease((t - 0.7) / 0.3); return [inw[0] * d, inw[1] * d, inw[2] * d]; }; } }
         const WP = (x, z) => { const q = M4.ap(M, [x, 0, z]); if (!disp) return q; const d = disp(x, z); return [q[0] + d[0], q[1] + d[1], q[2] + d[2]]; };
         const pw = p.x1 - p.x0, ph = p.y1 - p.y0, own = (x, z) => [(x - p.x0) / pw, (z - p.y0) / ph], full = (x, z) => [x / Bw, z / Bh];
         let iO = null, uO = null, iI = null, uI = null;
@@ -4002,6 +4010,17 @@ function Viewer3D(canvas) {
           const tp = []; for (let k = 0; k <= 64; k++) tp.push(M4.ap(M, arc(xa, xb, Math.PI * k / 64, bul)));
           const o0 = M4.ap(M, [(xa + xb) / 2, 0, b.y0]), o1 = M4.ap(M, [(xa + xb) / 2, 1, b.y0]);
           quads.push({ tube: true, pts: tp, w: tp, nrm: [o1[0] - o0[0], o1[1] - o0[1], o1[2] - o0[2]], col, mm, kind: hv.type });
+          // inside the bag: the cord comes through the hole and ends in a plastic tip (cords) or a knot (ribbon); paper handles are glued, nothing shows
+          if (hv.type !== 'rope') [[tp[0], -1], [tp[tp.length - 1], 1]].forEach(([e, sx]) => {
+            const ex = (sx < 0 ? xa + (xb - xa) / 2 - Math.min(hv.gap / 2, (xb - xa) / 2 - 8) : xa + (xb - xa) / 2 + Math.min(hv.gap / 2, (xb - xa) / 2 - 8)), z = hv.hy;
+            const nr = [o1[0] - o0[0], o1[1] - o0[1], o1[2] - o0[2]];
+            if (hv.type === 'ribbon') { const k = [[ex, 1.5, z], [ex, -2, z], [ex + sx * 1.5, -5, z + 1.5], [ex + sx * 2, -6.5, z + 5]].map(q => M4.ap(M, q)); quads.push({ tube: true, pts: k, w: k, nrm: nr, col, mm: 12, kind: 'knot' }); return; }
+            const st = [[ex, 1.5, z], [ex, -1.2, z], [ex + sx * 0.8, -2.6, z + 2.5], [ex + sx * 2.2, -3.2, z + 6]], dx = sx * 0.42, dz = 0.91, L = 24;
+            const e0 = st[3], tip = []; for (let k = 0; k <= 4; k++) tip.push([e0[0] + dx * L * k / 4, e0[1] - 0.15 * k, e0[2] + dz * L * k / 4]);
+            const sw = st.map(q => M4.ap(M, q)), tw = tip.map(q => M4.ap(M, q));
+            quads.push({ tube: true, pts: sw, w: sw, nrm: nr, col, mm, kind: hv.type });
+            quads.push({ tube: true, pts: tw, w: tw, nrm: nr, col: V.tipCol === 'hand' ? col : V.tipCol || '#161616', mm: mm + 1.6, kind: 'tip', cap: true });
+          });
         });
       }
       cards.forEach(cd => {   // one sheet: the front design on its whole outer side, the back design on its whole other side, folded in the middle
@@ -4177,7 +4196,7 @@ function Viewer3D(canvas) {
   async function show(i){
     cur = i; const o = OPTS[i], col = o.col || {}, imgs = await loadImgs(o);
     V.art = Object.assign({ mode: 'face' }, o.art || {}, imgs);
-    V.outCol = col.out || '#f4f1ea'; V.inCol = col.in || V.outCol; V.handleCol = col.handle || null; V.bg = col.bg || D.col && D.col.bg || 'grad'; V.t = 1;
+    V.outCol = col.out || '#f4f1ea'; V.inCol = col.in || V.outCol; V.handleCol = col.handle || null; V.tipCol = col.tip || null; V.bg = col.bg || D.col && D.col.bg || 'grad'; V.t = 1;
     document.body.style.background = V.bg === 'grad' ? 'linear-gradient(#f3f6f8,#c9d7e2)' : V.bg;
     V._camM = null; V.set(panels3D('bag', o.I, { t: o.t || 0.3 }));
     const sz = bagSpec(o.I); $('#info').textContent = ''; const b = document.createElement('b'); b.textContent = (OPTS.length > 1 ? o.label + ' — ' : 'المقاس: '); $('#info').append(b, document.createTextNode(sz)); $('#info').hidden = !sz;
