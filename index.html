@@ -4217,6 +4217,7 @@ function Viewer3D(canvas) {
   const API = 'https://script.google.com/macros/s/AKfycbyz_lO3R0xYnc6GWlFP6Q33tit9DKLOiN1kRXs9CJyG2dHga-1_XJz2gT8A12glj-Qj/exec';
   const $ = s => document.querySelector(s), msg = t => { $('#msg').textContent = t || ''; $('#msg').hidden = !t; };
   try { $('#lg').src = LOGO_EMBLEM; } catch (e) {}
+  if (/\/test\//.test(location.pathname)) { const s = document.createElement('div'); s.textContent = '🧪 نسخة تجريبية'; s.style.cssText = 'position:fixed;bottom:8px;left:8px;z-index:99;background:#e67e22;color:#fff;font:bold 12px Tahoma;padding:4px 8px;border-radius:6px'; document.body.append(s); }
   let D = window.__VIEW__, ANS = window.__ANS__ || null;
   const qs = new URLSearchParams(location.search), id = window.__VIEW_ID__ || qs.get('v') || (location.hash || '').replace('#', '');
   if (!D && id) { msg('بيحمّل شكل الكيس...'); try { const r = await fetch(API + '?api=view&id=' + encodeURIComponent(id)); const j = await r.json(); D = j && j.ok ? j.data : null; ANS = j && j.ans || null; } catch (e) {} }
