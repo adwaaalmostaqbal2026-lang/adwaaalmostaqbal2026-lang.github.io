@@ -1106,9 +1106,11 @@ function dieBag(L, W, D, t, handle, o) {
   return { paths: P, w: Bw, h: Bh, glue: 0, T, B, px, half: !!o.half };
 }
 // a plain rectangle (inside base board) or a folded leaflet / card
-function dieRect(w, h, fold) {
+function dieRect(w, h, fold, hole) {
   const P = [_pl(true, [[0, 0], [w, 0], [w, h], [0, h], [0, 0]])];
   if (fold) P.push(_ln(false, 0, h / 2, w, h / 2));
+  if (hole) { const r = (hole.d > 0 ? +hole.d : 6) / 2, off = hole.off > 0 ? +hole.off : 10, hx = hole.pos === 'corner' ? off + r : w / 2;   // punched hole (both halves when folded)
+    (fold ? [h / 2 - off, h / 2 + off] : [off]).forEach(hy => { const q = []; for (let k = 0; k <= 16; k++) { const a = k / 16 * Math.PI * 2; q.push([hx + r * Math.cos(a), hy + r * Math.sin(a)]); } P.push(_pl(true, q, true)); }); }
   return { paths: P, w, h, glue: 0 };
 }
 
@@ -1296,7 +1298,7 @@ function _lenSplit(paths) { let c = 0, k = 0; diePolylines(paths).forEach(pl => 
 /* ---------- paper bags: one piece or two halves, inside base board, promo card ---------- */
 const BAG_DEF = { split: 'auto', turn: 40, glue: 23, ovl: 12, place: 'auto', glueGrip: false, holeGap: 0, holeD: 6,
   base: { on: false, margin: 5, same: false, paper: '', gsm: 0, colF: 0, colB: 0, fin: {} },
-  card: { on: false, w: 100, h: 140, fold: true, n: 1, same: true, paper: '', gsm: 0, colF: null, colB: null, fin: {} } };
+  card: { on: false, w: 100, h: 140, fold: true, hole: 'mid', holeOff: 10, holeD: 6, n: 1, same: true, paper: '', gsm: 0, colF: null, colB: null, fin: {} } };
 function bagOpt(I) {
   const b = (I && I.bag) || {}, d = JSON.parse(JSON.stringify(BAG_DEF));
   ['split', 'turn', 'glue', 'ovl', 'place', 'glueGrip', 'holeGap', 'holeD'].forEach(k => { if (b[k] != null && b[k] !== '') d[k] = b[k]; });
@@ -1364,7 +1366,7 @@ function calcBag(P, I) {
     ex.push({ kind: 'base', name: 'قاعدة التقوية', w: bw, h: bh, n: 1, same: !!o.base.same, paper: o.base.paper || I.faceP, gsm: +o.base.gsm || +I.faceGsm, colF: +o.base.colF || 0, colB: +o.base.colB || 0, fin: Object.assign({}, o.base.fin || {}), mach: o.base.mach, where: o.base.where, takeSheet: o.base.where === 'bag', die: false, fold: false, k: +C.bagBaseK || 0 }); }
   if (o.card.on) { const cw = Math.max(1, +o.card.w || 100), ch = Math.max(1, +o.card.h || 140);
     ex.push({ kind: 'card', name: 'كارت الدعاية', w: cw, h: ch, n: Math.max(1, Math.round(+o.card.n || 1)), same: !!o.card.same, paper: o.card.paper || I.faceP, gsm: +o.card.gsm || +I.faceGsm,
-      colF: o.card.colF == null || o.card.colF === '' ? +I.colF || 0 : +o.card.colF, colB: o.card.colB == null || o.card.colB === '' ? +I.colB || 0 : +o.card.colB, fin: Object.assign({}, o.card.fin || {}), mach: o.card.mach, where: o.card.where, takeSheet: o.card.where === 'bag', die: true, fold: !!o.card.fold, k: +C.bagCardK || 0 }); }
+      colF: o.card.colF == null || o.card.colF === '' ? +I.colF || 0 : +o.card.colF, colB: o.card.colB == null || o.card.colB === '' ? +I.colB || 0 : +o.card.colB, fin: Object.assign({}, o.card.fin || {}), mach: o.card.mach, where: o.card.where, takeSheet: o.card.where === 'bag', die: true, fold: !!o.card.fold, hole: { pos: o.card.hole || 'mid', off: +o.card.holeOff || 10, d: +o.card.holeD || 6 }, k: +C.bagCardK || 0 }); }
   R.rows.forEach(r => { if (r.ok) r.mats = r.mats.map(m => Object.assign({}, m, { partName: 'الكيس', sheets: r.sheets })); });
   // a piece can share the bag sheet only with the same paper, and no more colours / finishes than the bag
   const sdB = k => { const v = (I.finishes || {})[k]; return v === true ? 1 : Math.max(0, Math.min(2, +v || 0)); };
@@ -1380,7 +1382,7 @@ function calcBag(P, I) {
     const g = +C.gap || 0;
     if (!ex.length || !ex.every(e => e.compat)) return null;
     const pcs = split ? 2 : 1, piece = R.die1, pSp = _lenSplit(piece.paths), items = [];
-    ex.forEach(e => { const dr = dieRect(e.w, e.h, e.fold), q = _lenSplit(dr.paths); items.push({ kind: e.kind, w: e.w, h: e.h, n: e.n, cut: q.cut, crease: q.crease, fold: e.fold }); });
+    ex.forEach(e => { const dr = dieRect(e.w, e.h, e.fold, e.hole), q = _lenSplit(dr.paths); items.push({ kind: e.kind, w: e.w, h: e.h, n: e.n, cut: q.cut, crease: q.crease, fold: e.fold }); });
     const setA = pcs * piece.w * piece.h + items.reduce((a, it) => a + it.w * it.h * it.n, 0);
     const nestFor = (X, Y, M) => {
       const gx = o.glueGrip ? Math.min(+o.glue || 0, (+M.grip || 0) + 1) : 0;
@@ -1431,7 +1433,7 @@ function calcBag(P, I) {
   if (eb && ec && ec.where === 'base') {   // the base keeps its full sheet; cards go in the empty part of it, the rest on their own sheet
     if (eb.same) { eb.paper = I.faceP; eb.gsm = +I.faceGsm; }
     const fin = {}; ['cello', 'oil', 'uv', 'spot', 'emb', 'foil'].forEach(k => { const v = Math.max(+eb.fin[k] || 0, +ec.fin[k] || 0); if (v) fin[k] = v; });
-    const cF = Math.max(eb.colF, ec.colF), cB = Math.max(eb.colB, ec.colB), sB = _lenSplit(dieRect(eb.w, eb.h, false).paths), sC = _lenSplit(dieRect(ec.w, ec.h, ec.fold).paths), g0 = +C.gap || 0;
+    const cF = Math.max(eb.colF, ec.colF), cB = Math.max(eb.colB, ec.colB), sB = _lenSplit(dieRect(eb.w, eb.h, false).paths), sC = _lenSplit(dieRect(ec.w, ec.h, ec.fold, ec.hole).paths), g0 = +C.gap || 0;
     const nestFor = (X, Y) => { const F = [{ x: 0, y: 0, w: X, h: Y }], bb = [0, 0], pl = []; let nB = 0, nC = 0;
       for (;;) { const ps = _pack(F, eb.w, eb.h, 1, g0, bb); if (!ps) break; nB++; ps.forEach(([x, y, w, h]) => pl.push({ kind: 'base', x, y, w, h })); }
       if (nB) for (;;) { const ps = _pack(F, ec.w, ec.h, 1, g0, bb); if (!ps) break; nC++; ps.forEach(([x, y, w, h]) => pl.push({ kind: 'card', x, y, w, h, fold: ec.fold, w0: ec.w })); }
@@ -1445,7 +1447,7 @@ function calcBag(P, I) {
     if (nC > 0) {
       comb.rows.forEach(r => { if (r.ok) { r.pack = 0; _rowRefresh(r, P); r.mats = r.mats.map(m => Object.assign({}, m, { partName: 'القاعدة + كروت في الفاضي', sheets: r.sheets })); } });
       // cards made on the base sheets, and the rest on a card sheet of their own
-      const dr = dieRect(ec.w, ec.h, ec.fold), sp = _lenSplit(dr.paths);
+      const dr = dieRect(ec.w, ec.h, ec.fold, ec.hole), sp = _lenSplit(dr.paths);
       const gC = { Bw: ec.w, Bh: ec.h, ruleUp: _lenOf(dr.paths) / 1000, cutUp: sp.cut, creaseUp: sp.crease, glue: 0, noDie: false, extraK: 0 };
       const Icard = Object.assign({}, I, { geo: gC, ear: 0, pcs: 1, construction: 1, faceP: ec.same ? I.faceP : ec.paper, faceGsm: ec.same ? +I.faceGsm : ec.gsm, colF: ec.colF, colB: ec.colB, finishes: ec.fin, machine: 'auto', _half: false });
       const cardM = ec.mach != null && ec.mach !== '' && ec.mach !== 'auto' ? +ec.mach : (() => { const t = calc0427(P, Object.assign({}, Icard, { qtys: [] })); let bi = -1; t.machines.forEach((mm, i) => { if (mm.ups > 0 && (bi < 0 || mm.ups > t.machines[bi].ups)) bi = i; }); return bi < 0 ? 'auto' : bi; })();
@@ -1467,7 +1469,7 @@ function calcBag(P, I) {
   }
   ex.forEach(e => {
     if (e.same) { e.paper = I.faceP; e.gsm = +I.faceGsm; }
-    const dr = dieRect(e.w, e.h, e.fold), sp = _lenSplit(dr.paths);
+    const dr = dieRect(e.w, e.h, e.fold, e.hole), sp = _lenSplit(dr.paths);
     // (a) on its own sheet, its own paper and printing
     const geo = { Bw: e.w, Bh: e.h, ruleUp: _lenOf(dr.paths) / 1000, cutUp: sp.cut, creaseUp: sp.crease, glue: 0, noDie: !e.die, extraK: e.k * e.n };
     const Ie = Object.assign({}, I, { geo, ear: 0, pcs: e.n, construction: 1, faceP: e.paper, faceGsm: e.gsm, colF: e.colF, colB: e.colB, finishes: e.fin, machine: 'auto', _half: false });
@@ -1602,7 +1604,7 @@ function dieSheetFor(R, m, I, part) {
   if (R.bag) {   // bags: the pieces plus the base / card placed on the same sheet
     const mm = R.machines[m], M = mm.M, ox = M.side - (mm.shiftX != null ? mm.shiftX : (mm.sx || 0) / 2), oy = M.grip;
     const ex = k => R.bag.extras.find(e => e.kind === k);
-    const rectDie = (q, e) => { const dr = dieRect(e.w, e.h, e.fold), rot = Math.abs(q.w - e.w) > 0.5;
+    const rectDie = (q, e) => { const dr = dieRect(e.w, e.h, e.fold, e.hole), rot = Math.abs(q.w - e.w) > 0.5;
       put(dr.paths, rot ? (x, y) => [ox + q.x + y, oy + q.y + x] : (x, y) => [ox + q.x + x, oy + q.y + y]); };
     if (R.bag.all && mm.nest) {
       mm.nest.pl.forEach(q => { if (q.kind === 'bag') { const rot = Math.abs(q.w - Bw) > 0.5; put(d.paths, rot ? (x, y) => [ox + q.x + y, oy + q.y + x] : (x, y) => [ox + q.x + x, oy + q.y + y]); }
@@ -1676,7 +1678,7 @@ function panels3D(style, I, R) {
       add('BF', px[0], y1, px[1], Bh, 'P1', 'T', 90, .7, .85); add('BB', px[2], y1, px[3], Bh, 'P3', 'T', 90, .85, 1);
       const ob = bagOpt(I);
       if ((I.handle || 'twist') !== 'none') handles = { px, y0, L, type: I.handle || 'twist', gap: ob.holeGap > 0 ? +ob.holeGap : Math.round(L * 0.3777), hy: y0 * 1.5 };
-      bag = { px, y0, y1, L, W, D, G, Hw: G + L + W, card: ob.card && ob.card.on ? { w: +ob.card.w || 100, h: +ob.card.h || 140, fold: !!ob.card.fold, n: Math.max(1, Math.min(8, Math.round(+ob.card.n || 1))) } : null, base: ob.base && ob.base.on ? { m: +ob.base.margin || 0 } : null };
+      bag = { px, y0, y1, L, W, D, G, Hw: G + L + W, card: ob.card && ob.card.on ? { w: +ob.card.w || 100, h: +ob.card.h || 140, fold: !!ob.card.fold, hole: { pos: ob.card.hole || 'mid', off: +ob.card.holeOff || 10, d: +ob.card.holeD || 6 }, n: Math.max(1, Math.min(8, Math.round(+ob.card.n || 1))) } : null, base: ob.base && ob.base.on ? { m: +ob.base.margin || 0 } : null };
     }
   } else {   // tray / lid & base
     const tray = (L2, W2, D2) => { const a = D2 + t, Lb = L2 + 2 * t, Wb = W2 + 2 * t, s = 1.5 + t; return { a, Lb, Wb, s, Bw: Lb + 2 * a, Bh: Wb + 2 * a, x0: a, x1: a + Lb, y0: a, y1: a + Wb }; };
@@ -3996,29 +3998,36 @@ function Viewer3D(canvas) {
           const sfx = i ? String(i + 1) : '', iF = art['cardF' + sfx] || art.cardF, iB = art['cardB' + sfx] || art.cardB, im = iF || iB;
           const dir = b.card.fold ? (art.cardDir === 'v' || art.cardDir === 'h' ? art.cardDir : (im && (im.width || 1) < (im.height || 1) ? 'h' : 'v')) : 'flat';
           const strand = i % 4, round = Math.floor(i / 4);
-          cards.push({ i, iF, iB, dir, Lg, Sh, th, phi, back: strand >= 2, a0: Math.PI * (strand % 2 === 0 ? 0.2 + 0.1 * round : 0.8 - 0.1 * round), bul: dir === 'v' ? 2 + (Lg / 2 - 8) * Math.sin(th) : dir === 'h' ? 9 : 6 }); } }
-      const tall = hv && hv.type === 'ribbon' ? 1.25 : 1.05;
+          // the cord threads through the card: behind it on one side, through the holes, in front of it on the other
+          const cr = hv ? ({ twist: 4.5, flat: 7, rope: 6, ribbon: 16 }[hv.type] || 5) / 2 : 2, offH = b.card.hole && b.card.hole.off > 0 ? +b.card.hole.off : 10;
+          const thrB = (dir === 'h' ? offH * (Math.sin(phi) + 0.35) : dir === 'v' ? offH * Math.sin(th) : 0) + cr + 1.2, thrF = cr + 1.2;
+          cards.push({ i, iF, iB, dir, Lg, Sh, th, phi, cr, thrB, thrF, back: strand >= 2, a0: Math.PI * (strand % 2 === 0 ? 0.2 + 0.1 * round : 0.8 - 0.1 * round), bul: dir === 'v' ? 2 + (Lg / 2 - 8) * Math.sin(th) : dir === 'h' ? 9 : 6 }); } }
+      const tall = hv && hv.type === 'ribbon' ? 1.25 : 1.05, clr = hv ? ({ twist: 4.5, flat: 7, rope: 6 }[hv.type] || 2) / 2 + 1 : 1.5;   // the cord runs just off the wall, never half inside it
       const arc = (xa, xb, a, bumps) => { const xc = (xa + xb) / 2, hw = Math.min(hv.gap / 2, (xb - xa) / 2 - 8), up = Math.max(hw * tall, 45), y = hv.hy;
-        let bump = 0; (bumps || []).forEach(c => { bump = Math.max(bump, c.bul * Math.exp(-Math.pow((a - c.a0) / 0.26, 2))); });
-        return [xc - hw * Math.cos(a), 1.5 + Math.sin(a) * 2 + bump, y - (y - b.y0 + up) * Math.pow(Math.sin(a), 0.85)]; };
+        let bump = 0, thr = 0; (bumps || []).forEach(c => { const g = Math.exp(-Math.pow((a - c.a0) / 0.26, 2)); bump = Math.max(bump, c.bul * g);
+          if (c.thrF != null) { const sg = Math.tanh((a - c.a0) / 0.045); thr += (sg < 0 ? -c.thrB : c.thrF) * Math.abs(sg) * g; } });
+        bump += thr;
+        return [xc - hw * Math.cos(a), clr + Math.sin(a) * 2 + bump, y - (y - b.y0 + up) * Math.pow(Math.sin(a), 0.85)]; };
       if (hv) {
         const def = { twist: '#e8e0cc', flat: '#d9c7a3', rope: '#a57c52', ribbon: '#b3262e' }[hv.type] || '#a57c52', col = V.handleCol || def;
         const mm = { twist: 4.5, flat: 7, rope: 6, ribbon: 16 }[hv.type] || 5;
         [['P1', px[0], px[1], M1, cards.filter(c => !c.back)], ['P3', px[2], px[3], M3, cards.filter(c => c.back)]].forEach(([id, xa, xb, M, bul]) => {
           const pts = []; for (let k = 0; k <= 20; k++) pts.push(M4.ap(M, arc(xa, xb, Math.PI * k / 20, bul)));
           for (let k = 0; k < 20; k++) quads.push({ line: true, w: [pts[k], pts[k + 1]], col, mm, kind: hv.type, k, over: { id, side: 'out', rank: 1.5, soft: true } });
-          const tp = []; for (let k = 0; k <= 64; k++) tp.push(M4.ap(M, arc(xa, xb, Math.PI * k / 64, bul)));
+          const tp = [], NS = bul.length ? 220 : 64; for (let k = 0; k <= NS; k++) tp.push(M4.ap(M, arc(xa, xb, Math.PI * k / NS, bul)));   // fine steps where it goes through a card
           const o0 = M4.ap(M, [(xa + xb) / 2, 0, b.y0]), o1 = M4.ap(M, [(xa + xb) / 2, 1, b.y0]);
           quads.push({ tube: true, pts: tp, w: tp, nrm: [o1[0] - o0[0], o1[1] - o0[1], o1[2] - o0[2]], col, mm, kind: hv.type });
           // inside the bag: the cord comes through the hole and ends in a plastic tip (cords) or a knot (ribbon); paper handles are glued, nothing shows
           if (hv.type !== 'rope') [[tp[0], -1], [tp[tp.length - 1], 1]].forEach(([e, sx], ei) => {
             const ex = (sx < 0 ? xa + (xb - xa) / 2 - Math.min(hv.gap / 2, (xb - xa) / 2 - 8) : xa + (xb - xa) / 2 + Math.min(hv.gap / 2, (xb - xa) / 2 - 8)), z = hv.hy;
-            const nr = [o1[0] - o0[0], o1[1] - o0[1], o1[2] - o0[2]];
-            if (hv.type === 'ribbon') { const k = [[ex, 1.5, z], [ex, -2, z], [ex + sx * 1.5, -5, z + 1.5], [ex + sx * 2, -6.5, z + 5]].map(q => M4.ap(M, q)); quads.push({ tube: true, pts: k, w: k, nrm: nr, col, mm: 12, kind: 'knot' }); return; }
+            const q0 = M4.ap(M, [0, 0, 0]), q1 = M4.ap(M, [1, 0, 0]), nr = [q1[0] - q0[0], q1[1] - q0[1], q1[2] - q0[2]];   // along the wall: never parallel to a cord going through it
+            // the hole: a small dark ring round the cord, through the wall and the turn-in behind it
+            if (hv.type !== 'ribbon') { const hr = [[ex, 0.6, z], [ex, -0.3, z], [ex, -1.4, z]].map(q => M4.ap(M, q)); quads.push({ tube: true, pts: hr, w: hr, nrm: nr, col: '#2a2420', mm: mm + 2.4, kind: 'tip', cap: true }); }
+            if (hv.type === 'ribbon') { const k = [[ex, clr, z], [ex, -2, z], [ex + sx * 1.5, -5, z + 1.5], [ex + sx * 2, -6.5, z + 5]].map(q => M4.ap(M, q)); quads.push({ tube: true, pts: k, w: k, nrm: nr, col, mm: 12, kind: 'knot' }); return; }
             // always inside: the cord goes through the hole, bends down along the inner side, and the tip hangs a little apart from the wall (never shows through it)
             const vr = [0.38, 0.22, 0.3, 0.46][(id === 'P1' ? 0 : 2) + ei], ag = sx * vr, dx = Math.sin(ag), dz = Math.cos(ag), L = 27;
-            const st = [[ex, 1.5, z], [ex, -2.5, z], [ex + sx * 1.2, -6, z + 3], [ex + dx * 6, -8, z + 8]];
-            const e0 = st[3], tip = []; for (let k = 0; k <= 4; k++) tip.push([e0[0] + dx * L * k / 4, e0[1] - 0.6 * k, e0[2] + dz * L * k / 4]);
+            const st = [[ex, clr, z], [ex, clr * 0.4, z], [ex, -1, z], [ex, -2.5, z], [ex + sx * 0.6, -5.2, z + 1.6], [ex + sx * 1.2, -6.8, z + 4], [ex + dx * 6, -8, z + 8]];
+            const e0 = st[st.length - 1], tip = []; for (let k = 0; k <= 4; k++) tip.push([e0[0] + dx * L * k / 4, e0[1] - 0.6 * k, e0[2] + dz * L * k / 4]);
             const sw = st.map(q => M4.ap(M, q)), tw = tip.map(q => M4.ap(M, q));
             quads.push({ tube: true, pts: sw, w: sw, nrm: nr, col, mm, kind: hv.type });
             quads.push({ tube: true, pts: tw, w: tw, nrm: nr, col: V.tipCol === 'hand' ? col : V.tipCol || '#161616', mm: mm + 1.1, kind: 'tip', cap: true });
@@ -4028,22 +4037,45 @@ function Viewer3D(canvas) {
       cards.forEach(cd => {   // one sheet: the front design on its whole outer side, the back design on its whole other side, folded in the middle
         const { Lg, Sh, dir, th, phi, iF, iB } = cd, W = '#fbfaf6', Mc = cd.back ? M3 : M1, L = q => M4.ap(Mc, q), ov = { id: cd.back ? 'P3' : 'P1', side: 'out', rank: 2 };
         const xa = cd.back ? px[2] : px[0], xb = cd.back ? px[3] : px[1];
-        const H = hv ? arc(xa, xb, cd.a0, [cd]) : [xa + (xb - xa) * (0.2 + 0.2 * (cd.i % 4)), 1.5 + cd.bul, b.y0 + 12];
+        const hc0 = b.card.hole || {}, hr0 = Math.max((hc0.d > 0 ? +hc0.d : 6) / 2, cd.cr + 1.2), H0 = hv ? arc(xa, xb, cd.a0, [cd]) : [xa + (xb - xa) * (0.2 + 0.2 * (cd.i % 4)), 1.5 + cd.bul, b.y0 + 12];
+        const H = [H0[0], H0[1], H0[2] + (hv ? hr0 - cd.cr : 0)];   // the card drops by its weight: the cord rests on the top of the hole
+        const hc = b.card.hole || {}, off = hc.off > 0 ? +hc.off : 10, hr = hr0, corner = hc.pos === 'corner';
+        let holes = [], rot = null;   // punched holes in sheet mm, and a turn of the whole card round the cord (a card hung by a corner leans)
         const pc = (pos, s0, s1, t0, t1, SW, SH) => {   // panel = sheet rectangle [s0,s1]x[t0,t1] (mm), pos(sx,sy) -> wall local
-          const P4 = [pos(s0, t0), pos(s1, t0), pos(s1, t1), pos(s0, t1)].map(L);
-          const uv = (u, v) => [(s0 + (s1 - s0) * u) / SW, (t0 + (t1 - t0) * v) / SH];
-          piece(P4, iF, uv, iB, (u, v) => { const q = uv(u, v); return [1 - q[0], q[1]]; }, W, ov, 4); };
-        if (dir === 'v') {   // landscape sheet, fold upright in the middle, opened like a book with the spine towards you; hole beside the fold, near the top
-          const ct = Math.cos(th), st = Math.sin(th), xf = H[0] - 8 * ct, yf = H[1] + 8 * st, zt = H[2] - 10, half = Lg / 2;
+          const ps = rot ? (sx, sy) => rot(pos(sx, sy)) : pos, P4 = [ps(s0, t0), ps(s1, t0), ps(s1, t1), ps(s0, t1)].map(L);
+          const uv = (u, v) => [(s0 + (s1 - s0) * u) / SW, (t0 + (t1 - t0) * v) / SH], uvB = (u, v) => { const q = uv(u, v); return [1 - q[0], q[1]]; };
+          const h = holes.find(([hx, hy]) => hx > s0 && hx < s1 && hy > t0 && hy < t1);
+          if (!h) { piece(P4, iF, uv, iB, uvB, W, ov, 4); return; }
+          // the hole is really cut out: rings of cells round it, plain cells elsewhere
+          const cu = (h[0] - s0) / (s1 - s0), cv = (h[1] - t0) / (t1 - t0), ru = hr / (s1 - s0), rv = hr / (t1 - t0), a = Math.min(ru * 2.4, cu, 1 - cu), bb = Math.min(rv * 2.4, cv, 1 - cv), sub = [];
+          const cell = c => { let ar = 0; for (let k = 0; k < 4; k++) { const p = c[k], q = c[(k + 1) % 4]; ar += p[0] * q[1] - q[0] * p[1]; } if (ar < 0) c = [c[0], c[3], c[2], c[1]];
+            sub.push({ w: c.map(([u, v]) => bil(P4, u, v)), o: iF ? c.map(([u, v]) => uv(u, v)) : null, i: iB ? c.map(([u, v]) => uvB(u, v)) : null }); };
+          const us = [0, cu - a, cu + a, 1], vs = [0, cv - bb, cv + bb, 1];
+          for (let x = 0; x < 3; x++) for (let y = 0; y < 3; y++) { if (x === 1 && y === 1) continue; const u0 = us[x], u1 = us[x + 1], v0 = vs[y], v1 = vs[y + 1]; if (u1 - u0 < 1e-4 || v1 - v0 < 1e-4) continue;
+            const nx = Math.max(1, Math.round((u1 - u0) * 4)), ny = Math.max(1, Math.round((v1 - v0) * 4));
+            for (let ii = 0; ii < nx; ii++) for (let jj = 0; jj < ny; jj++) { const A = u0 + (u1 - u0) * ii / nx, B2 = u0 + (u1 - u0) * (ii + 1) / nx, C = v0 + (v1 - v0) * jj / ny, D2 = v0 + (v1 - v0) * (jj + 1) / ny; cell([[A, C], [B2, C], [B2, D2], [A, D2]]); } }
+          const N = 24, ring = k => { const t = k / N * Math.PI * 2, c = Math.cos(t), sn = Math.sin(t), m2 = Math.max(Math.abs(c), Math.abs(sn));
+            return [[cu + ru * c, cv + rv * sn], [cu + a * c / m2, cv + bb * sn / m2]]; };
+          for (let k = 0; k < N; k++) { const [i0, o0] = ring(k), [i1, o1] = ring(k + 1); cell([i0, o0, o1, i1]); }
+          quads.push({ w: P4, uv: [[0, 0], [1, 0], [1, 1], [0, 1]], to: iF ? { img: iF } : null, ti: iB ? { img: iB } : null, sub, colO: W, colI: W, e: [true, true, true, true], over: ov }); };
+        const lean = (cx, cz) => { const dx = cx - H[0], dz = cz - H[2], f = corner ? 0.35 * Math.atan2(dx, dz) : 0; if (Math.abs(f) < 1e-3) return null;
+          const c = Math.cos(f), sn = Math.sin(f); return q => { const x = q[0] - H[0], z = q[2] - H[2]; return [H[0] + x * c - z * sn, q[1], H[2] + x * sn + z * c]; }; };
+        if (dir === 'v') {   // landscape sheet, fold upright in the middle, opened like a book with the spine towards you; the cord goes through the holes beside the fold, near the top
+          const ct = Math.cos(th), st = Math.sin(th), half = Lg / 2, hy = off, xf = H[0] + off * ct, yf = H[1] + off * st, zt = H[2] - hy;
+          holes = [[half - off, hy], [half + off, hy]];
           const pos = (sx, sy) => { const d = sx - half; return [xf + d * ct, yf - Math.abs(d) * st, zt + sy]; };
           pc(pos, 0, half, 0, Sh, Lg, Sh); pc(pos, half, Lg, 0, Sh, Lg, Sh);
-        } else if (dir === 'h') {   // portrait sheet folded at the top over the cord: the lower half of the outer side faces you, the upper half lies behind
-          const half = Lg / 2, sf = Math.sin(phi), cf = Math.cos(phi), x0 = H[0] - Sh / 2, zt = H[2] - 8 * cf, yf = H[1] - 8 * sf, ps = Math.asin(Math.max(0, Math.min(0.5, (yf - 2) / half))), sb = Math.sin(ps), cb = Math.cos(ps);
+        } else if (dir === 'h') {   // portrait sheet folded at the top: the cord goes through the hole in both halves, the lower half of the outer side faces you
+          const half = Lg / 2, sf = Math.sin(phi), cf = Math.cos(phi), hx = corner ? Math.min(Sh / 2, off + hr) : Sh / 2, x0 = H[0] - hx, zt = H[2] - off * cf, yf = H[1] - off * sf, ps = Math.asin(Math.max(0, Math.min(0.5, (yf - 2) / half))), sb = Math.sin(ps), cb = Math.cos(ps);
+          holes = [[hx, half - off], [hx, half + off]];
           const pos = (sx, sy) => { const d = sy - half; return d >= 0 ? [x0 + sx, yf + d * sf, zt + d * cf] : [x0 + sx, yf + d * sb, zt - d * cb]; };
+          const cc = pos(Sh / 2, half + half / 2); rot = lean(cc[0], cc[2]);
           pc(pos, 0, Sh, 0, half, Sh, Lg); pc(pos, 0, Sh, half, Lg, Sh, Lg);
-        } else {   // flat card, hole at the top middle
-          const w = b.card.w, h = b.card.h, s8 = Math.sin(0.1), c8 = Math.cos(0.1), x0 = H[0] - w / 2, zt = H[2] - 8 * c8, y0 = H[1] - 8 * s8;
-          pc((sx, sy) => [x0 + sx, y0 + sy * s8, zt + sy * c8], 0, w, 0, h, w, h);
+        } else {   // flat card hung from its hole near the top
+          const w = b.card.w, h = b.card.h, s8 = Math.sin(0.1), c8 = Math.cos(0.1), hx = corner ? Math.min(w / 2, off + hr) : w / 2, x0 = H[0] - hx, zt = H[2] - off * c8, y0 = H[1] - off * s8;
+          holes = [[hx, off]];
+          const pos = (sx, sy) => [x0 + sx, y0 + sy * s8, zt + sy * c8], cc = pos(w / 2, h / 2); rot = lean(cc[0], cc[2]);
+          pc(pos, 0, w, 0, h, w, h);
         }
       });
     }
