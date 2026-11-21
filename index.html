@@ -16,6 +16,7 @@ header b{font-size:17px}header small{display:block;font-size:12px;opacity:.85;fo
 #bar{flex:none;display:flex;gap:8px;padding:8px 10px calc(8px + env(safe-area-inset-bottom));background:#fff;border-top:1px solid #e5d3a8;align-items:center;flex-wrap:wrap}#bar button{flex:1;min-width:130px;padding:11px;border-radius:10px;border:0;font:inherit;font-size:15px;font-weight:600;cursor:pointer}#bOk{background:#2e7d32;color:#fff}#bNote{background:#fff8e8;color:#6b1616;border:1px solid #c9a23a!important}
 #ans{width:100%;font-size:13px;color:#2e5e2e}
 #ansBox{position:fixed;inset:0;z-index:9;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center}#ansBox[hidden]{display:none}#ansBox .card{background:#fff;width:100%;max-width:520px;border-radius:14px 14px 0 0;padding:14px;display:flex;flex-direction:column;gap:8px}#ansBox textarea,#ansBox input{font:inherit;padding:8px;border-radius:8px;border:1px solid #ccc}#ansBox .row{display:flex;gap:8px}#ansBox .row button{flex:1;padding:10px;border-radius:8px;border:0;font:inherit;cursor:pointer}#ansSend{background:#6b1616;color:#fff}#ansErr{font-size:13px;color:#b71c1c}
+#feats{flex:none;display:flex;flex-wrap:wrap;gap:6px 10px;justify-content:center;background:#fffdf6;border-bottom:1px solid #eadfc4;padding:6px 10px}#feats figure{margin:0;display:flex;flex-direction:column;align-items:center;font-size:11px;color:#4a2a10;min-width:52px}#feats canvas{width:36px;height:36px}
 #info{flex:none;background:#fff8e8;color:#4a2a10;border-bottom:1px solid #e5d3a8;padding:7px 14px;font-size:14px;line-height:1.5}#info b{color:#6b1616}
 #cv{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab}
 .tools{position:absolute;top:10px;left:10px;display:flex;flex-direction:column;gap:8px;z-index:2}
@@ -28,6 +29,7 @@ header b{font-size:17px}header small{display:block;font-size:12px;opacity:.85;fo
 <body>
 <header><img id="lg" alt=""><div><b>مصنع أضواء المستقبل للتصنيع</b><small>عالم الطباعة والتغليف — شكل الكيس 3D</small></div></header>
 <div id="info" hidden></div>
+<div id="feats" hidden></div>
 <div id="opts" hidden></div>
 <div id="stage"><canvas id="cv"></canvas>
 <div class="tools"><button id="zin" title="تكبير">+</button><button id="zout" title="تصغير">−</button><button id="home" title="رجّع الكيس لوضعه">⟲</button><button id="fs" title="ملء الشاشة">⛶</button></div>
@@ -1073,12 +1075,32 @@ function dieTray2(L, W, D, t) {
 
 
 // Paper bag (SOS bottom): glue | front L | gusset W | back L | gusset W ; top turn T, body D, bottom W/2 + 15
-const HANDLES = { twist: 'يد عادي', flat: 'يد مجدول', rope: 'يد كرافت', ribbon: 'يد ريبون', none: 'من غير يد' };
+const HANDLES = { twist: 'يد عادي', flat: 'يد مجدول', rope: 'يد كرافت', ribbon: 'يد ريبون', tape: 'يد شريط ورق', diecut: 'يد مقصوصة', none: 'من غير يد' };
+const CORD_H = h => /^(twist|flat|rope|ribbon)$/.test(h || 'twist');   // handles through holes
+const defTurn = h => h === 'none' ? 25 : 40;
+// die-cut handle slot: given sizes, or one that suits the bag (about 30% of the width, 70..100 mm)
+function slotDef(o, L, D){ const r5 = v => Math.round(v / 5) * 5; return { w: +o.slotW > 0 ? +o.slotW : Math.max(70, Math.min(100, r5(L * 0.3))), h: +o.slotH > 0 ? +o.slotH : (L < 250 ? 25 : 30), top: +o.slotTop > 0 ? +o.slotTop : (D < 250 ? 15 : 20) }; }
+// the reinforcement board glued inside each wall round the slot
+function reinfDef(o, L, D){ const S = slotDef(o, L, D); return { w: Math.max(50, L - 10), h: S.top + S.h + 15, slot: S }; }
+// a rounded slot as a polygon (x centre, y top / bottom), optionally clipped to y >= yMin (the part beyond a cut edge does not exist)
+function slotPoly(cx, ya, yb, w, yMin){ const rr = (yb - ya) / 2, cy = (ya + yb) / 2, q = [];
+  for (let k = 0; k <= 12; k++) { const a = -Math.PI / 2 + k / 12 * Math.PI; q.push([cx + w / 2 - rr + rr * Math.cos(a), cy + rr * Math.sin(a)]); }
+  for (let k = 0; k <= 12; k++) { const a = Math.PI / 2 + k / 12 * Math.PI; q.push([cx - w / 2 + rr + rr * Math.cos(a), cy + rr * Math.sin(a)]); }
+  if (yMin == null) return q; const out = [];
+  for (let i = 0; i < q.length; i++) { const A = q[i], B = q[(i + 1) % q.length], inA = A[1] >= yMin, inB = B[1] >= yMin;
+    if (inA) out.push(A); if (inA !== inB) { const t = (yMin - A[1]) / (B[1] - A[1]); out.push([A[0] + (B[0] - A[0]) * t, yMin]); } }
+  return out.length > 2 ? out : null; }
+// handle (+ eyelets) cost per 1000 bags; null = a price that is not entered yet
+function bagHandleK(C, h, o){ const k = { twist: 'handleTwistK', flat: 'handleFlatK', rope: 'handleRopeK', ribbon: 'handleRibbonK', tape: 'handleTapeK', diecut: 'handleDiecutK' }[h];
+  let v = k ? +C[k] || 0 : 0; if (o && o.eyelet && CORD_H(h)) v += +C.eyeletK || 0; return v; }
+function bagPriceGaps(C, I){ const h = I.handle || 'twist', o = bagOpt(I), miss = [];
+  if (h === 'tape' && !(+C.handleTapeK > 0)) miss.push('يد الشريط الورق'); if (h === 'diecut' && !(+C.handleDiecutK > 0)) miss.push('اليد المقصوصة');
+  if (o.eyelet && CORD_H(h) && !(+C.eyeletK > 0)) miss.push('الحلق المعدن'); if (h === 'diecut' && o.reinf && o.reinf.on && !(+C.bagReinfK > 0)) miss.push('لزق التدعيم'); return miss; }
 function dieBag(L, W, D, t, handle, o) {
   // SOS paper bag (like the factory die): glue | front | gusset | back | gusset, or one half = glue | front | gusset.
   // Height: top turn T | body D | bottom W/2 + overlap. Paper: no thickness allowance.
   o = o || {};
-  const G = o.glue > 0 ? +o.glue : 23, T = o.turn > 0 ? +o.turn : (handle === 'none' ? 25 : 40), ov = o.ovl > 0 ? +o.ovl : 12;
+  const G = o.glue > 0 ? +o.glue : 23, T = o.turn > 0 ? +o.turn : defTurn(handle), ov = o.ovl > 0 ? +o.ovl : 12;
   const B = W / 2 + ov, P = [];
   const sEnd = o.half ? L + W : 2 * L + 2 * W, Bw = G + sEnd, Bh = T + D + B, yT = T, yB = T + D, yA = yB - W / 2;
   const X = sv => G + sv;   // circumference s (0 = front starts) -> blank x
@@ -1097,7 +1119,12 @@ function dieBag(L, W, D, t, handle, o) {
     if (dmax - dmin > 0.5) P.push(_ln(false, X(c + sg * dmin), yA + dmin, X(c + sg * dmax), yA + dmax));
   })));
   const faces = o.half ? [[0, L]] : [[0, L], [L + W, 2 * L + W]];
-  if (handle && handle !== 'none') {   // every handle: 2 holes in the turn + 2 in the wall, mirrored on the turn fold so they meet when it folds in
+  if (handle === 'diecut') {   // die-cut handle: the slot in the wall, and where the turn folds over it the same slot mirrored on the fold (only the part the turn really covers)
+    const S = slotDef(o, L, D);
+    faces.forEach(([a1, b1]) => { const m = X((a1 + b1) / 2); P.push(_pl(true, slotPoly(m, T + S.top, T + S.top + S.h, S.w), true));
+      const tq = slotPoly(m, T - S.top - S.h, T - S.top, S.w, 0); if (tq) P.push(_pl(true, tq, true)); });
+  }
+  if (CORD_H(handle)) {   // cord handles: 2 holes in the turn + 2 in the wall, mirrored on the turn fold so they meet when it folds in
     const gap = o.holeGap > 0 ? +o.holeGap : Math.round(L * 0.3777), r = (o.holeD > 0 ? +o.holeD : 6) / 2;
     const ring = (cx, cy) => { const q = []; for (let k2 = 0; k2 < 16; k2++) { const a2 = k2 / 16 * Math.PI * 2; q.push([cx + r * Math.cos(a2), cy + r * Math.sin(a2)]); } return _pl(true, q, true); };
     faces.forEach(([a1, b1]) => { const m = (a1 + b1) / 2; [m - gap / 2, m + gap / 2].forEach(sv => [T / 2, T + T / 2].forEach(yy => P.push(ring(X(sv), yy)))); });
@@ -1108,6 +1135,7 @@ function dieBag(L, W, D, t, handle, o) {
 // a plain rectangle (inside base board) or a folded leaflet / card
 function dieRect(w, h, fold, hole) {
   const P = [_pl(true, [[0, 0], [w, 0], [w, h], [0, h], [0, 0]])];
+  if (hole && hole.slot) { const S = hole.slot; P.push(_pl(true, slotPoly(w / 2, S.top, S.top + S.h, S.w), true)); return { paths: P, w, h, glue: 0 }; }
   if (fold) P.push(_ln(false, 0, h / 2, w, h / 2));
   if (hole) { const r = (hole.d > 0 ? +hole.d : 6) / 2, off = hole.off > 0 ? +hole.off : 10, hx = hole.pos === 'corner' ? off + r : w / 2;   // punched hole (both halves when folded)
     (fold ? [h / 2 - off, h / 2 + off] : [off]).forEach(hy => { const q = []; for (let k = 0; k <= 16; k++) { const a = k / 16 * Math.PI * 2; q.push([hx + r * Math.cos(a), hy + r * Math.sin(a)]); } P.push(_pl(true, q, true)); }); }
@@ -1298,11 +1326,12 @@ function _lenSplit(paths) { let c = 0, k = 0; diePolylines(paths).forEach(pl => 
 /* ---------- paper bags: one piece or two halves, inside base board, promo card ---------- */
 const BAG_DEF = { split: 'auto', turn: 40, glue: 23, ovl: 12, place: 'auto', glueGrip: false, holeGap: 0, holeD: 6,
   base: { on: false, margin: 5, same: false, paper: '', gsm: 0, colF: 0, colB: 0, fin: {} },
+  reinf: { on: true, paper: '', gsm: 0 },
   card: { on: false, w: 100, h: 140, fold: true, hole: 'mid', holeOff: 10, holeD: 6, n: 1, same: true, paper: '', gsm: 0, colF: null, colB: null, fin: {} } };
 function bagOpt(I) {
   const b = (I && I.bag) || {}, d = JSON.parse(JSON.stringify(BAG_DEF));
-  ['split', 'turn', 'glue', 'ovl', 'place', 'glueGrip', 'holeGap', 'holeD'].forEach(k => { if (b[k] != null && b[k] !== '') d[k] = b[k]; });
-  ['base', 'card'].forEach(k => Object.assign(d[k], b[k] || {}));
+  ['split', 'turn', 'glue', 'ovl', 'place', 'glueGrip', 'holeGap', 'holeD', 'eyelet', 'slotW', 'slotH', 'slotTop'].forEach(k => { if (b[k] != null && b[k] !== '') d[k] = b[k]; });
+  ['base', 'card', 'reinf'].forEach(k => Object.assign(d[k], b[k] || {}));
   if (!d.card.setCol && +d.card.colF === 4 && +d.card.colB === 4) { d.card.colF = null; d.card.colB = null; }
   // where each piece goes: auto / bag (bag sheet) / base (card only: in the base's sheet) / sep (own sheet)
   if (!d.card.where) d.card.where = d.card.withBase ? 'base' : d.card.takeSheet ? 'bag' : 'auto';
@@ -1350,14 +1379,14 @@ function calcBag(P, I) {
   const body = half => {
     const d = dieBag(L, W, D, t, h, Object.assign({}, o, { half })), sp = _lenSplit(d.paths);
     const geo = { Bw: d.w, Bh: d.h, ruleUp: _lenOf(d.paths) / 1000, cutUp: sp.cut, creaseUp: sp.crease, glue: 0, noDie: false, gripExt: o.glueGrip ? +o.glue || 0 : 0, sideExt: !!o.glueGrip,
-      extraK: (+C.bagMakeK || 0) + (h === 'twist' ? +C.handleTwistK || 0 : h === 'flat' ? +C.handleFlatK || 0 : h === 'rope' ? +C.handleRopeK || 0 : h === 'ribbon' ? +C.handleRibbonK || 0 : 0) + (half ? +C.bagSplitK || 0 : 0) };
+      extraK: (+C.bagMakeK || 0) + bagHandleK(C, h, o) + (half ? +C.bagSplitK || 0 : 0) };
     return Object.assign(calc0427(P, Object.assign({}, I, { geo, ear: 0, pcs: half ? 2 : 1, _half: half })), { die1: d });
   };
   let split = o.split === 'two';
   let R = body(split);
   const fitsOne = !split && R.machines.some(m => m.ups > 0);
   if (o.split === 'auto' && !fitsOne) { split = true; R = body(true); }
-  else if (o.split === 'auto') {   // both fit: keep the cheaper (one piece vs two halves)
+  else if (o.split === 'auto' && h !== 'diecut') {   // both fit: keep the cheaper (one piece vs two halves); a die-cut handle bag stays one piece when it fits
     const R2 = body(true), c = X => { const r = X.rows.find(q => q.ok); return r ? r.total : Infinity; };
     if (c(R2) < c(R) - 1e-9) { split = true; R = R2; } }
   const ex = [];
@@ -1367,6 +1396,8 @@ function calcBag(P, I) {
   if (o.card.on) { const cw = Math.max(1, +o.card.w || 100), ch = Math.max(1, +o.card.h || 140);
     ex.push({ kind: 'card', name: 'كارت الدعاية', w: cw, h: ch, n: Math.max(1, Math.round(+o.card.n || 1)), same: !!o.card.same, paper: o.card.paper || I.faceP, gsm: +o.card.gsm || +I.faceGsm,
       colF: o.card.colF == null || o.card.colF === '' ? +I.colF || 0 : +o.card.colF, colB: o.card.colB == null || o.card.colB === '' ? +I.colB || 0 : +o.card.colB, fin: Object.assign({}, o.card.fin || {}), mach: o.card.mach, where: o.card.where, takeSheet: o.card.where === 'bag', die: true, fold: !!o.card.fold, hole: { pos: o.card.hole || 'mid', off: +o.card.holeOff || 10, d: +o.card.holeD || 6 }, k: +C.bagCardK || 0 }); }
+  if (h === 'diecut' && o.reinf && o.reinf.on) { const rd = reinfDef(o, L, D), same = !o.reinf.paper && !(+o.reinf.gsm);
+    ex.push({ kind: 'reinf', name: 'تدعيم اليد', w: rd.w, h: rd.h, n: 2, same, paper: o.reinf.paper || I.faceP, gsm: +o.reinf.gsm || +I.faceGsm, colF: 0, colB: 0, fin: {}, mach: 'auto', where: 'auto', takeSheet: false, die: true, fold: false, hole: { slot: rd.slot }, k: +C.bagReinfK || 0 }); }
   R.rows.forEach(r => { if (r.ok) r.mats = r.mats.map(m => Object.assign({}, m, { partName: 'الكيس', sheets: r.sheets })); });
   // a piece can share the bag sheet only with the same paper, and no more colours / finishes than the bag
   const sdB = k => { const v = (I.finishes || {})[k]; return v === true ? 1 : Math.max(0, Math.min(2, +v || 0)); };
@@ -1405,7 +1436,7 @@ function calcBag(P, I) {
       return { n: 0, ew: 0, eh: 0, pl: [], knifeCut: 0, knifeCrease: 0 };
     };
     const geo = { Bw: piece.w, Bh: piece.h, glue: 0, noDie: false, ruleUp: 0, cutUp: 0, creaseUp: 0, nestFor, setNest: true, sideExt: !!o.glueGrip,
-      extraK: (+C.bagMakeK || 0) + (h === 'twist' ? +C.handleTwistK || 0 : h === 'flat' ? +C.handleFlatK || 0 : h === 'rope' ? +C.handleRopeK || 0 : h === 'ribbon' ? +C.handleRibbonK || 0 : 0) + (split ? +C.bagSplitK || 0 : 0) + ex.reduce((a, e) => a + e.k * e.n, 0) };
+      extraK: (+C.bagMakeK || 0) + bagHandleK(C, h, o) + (split ? +C.bagSplitK || 0 : 0) + ex.reduce((a, e) => a + e.k * e.n, 0) };
     const aF = Math.max(+I.colF || 0, ...ex.map(e => e.colF)), aB = Math.max(+I.colB || 0, ...ex.map(e => e.colB));
     ex.forEach(e => { e.sheetF = aF; e.sheetB = aB; e.upPrint = aF > (+I.colF || 0) || aB > (+I.colB || 0); });
     const A = calc0427(P, Object.assign({}, I, { geo, ear: 0, pcs: 1, _half: split, colF: aF, colB: aB }));
@@ -1577,7 +1608,7 @@ function calcBox(P, I) {
     if (style === 'bag') {   // bags: guillotine cut (no die), making + handles per 1000 bags
       const C = P.consts, h = I.handle || 'twist';
       geo.noDie = true; geo.glue = 0;
-      geo.extraK = (+C.bagMakeK || 0) + (h === 'twist' ? +C.handleTwistK || 0 : h === 'flat' ? +C.handleFlatK || 0 : h === 'rope' ? +C.handleRopeK || 0 : h === 'ribbon' ? +C.handleRibbonK || 0 : 0);
+      geo.extraK = (+C.bagMakeK || 0) + bagHandleK(C, h, bagOpt(I));
     }
     return calc0427(P, Object.assign({}, I, over || {}, { L, W, D, geo, ear: 0 }));
   };
@@ -1669,7 +1700,7 @@ function panels3D(style, I, R) {
     let y0, y1;
     if (style === '0201') { const f = (W + t) / 2; y0 = f; y1 = f + D + t; Bh = y1 + f; }
     else if (style === 'rte') { const T = 15 + t; y0 = W + T; y1 = y0 + D + t; Bh = y1 + W + T; }
-    else { const ob = bagOpt(I), T = ob.turn > 0 ? +ob.turn : ((I.handle === 'none') ? 25 : 40), B = W / 2 + (ob.ovl > 0 ? +ob.ovl : 12); y0 = T; y1 = T + D; Bh = y1 + B; }
+    else { const ob = bagOpt(I), T = ob.turn > 0 ? +ob.turn : defTurn(I.handle || 'twist'), B = W / 2 + (ob.ovl > 0 ? +ob.ovl : 12); y0 = T; y1 = T + D; Bh = y1 + B; }
     add('P1', px[0], y0, px[1], y1);
     add('P2', px[1], y0, px[2], y1, 'P1', 'L', 90, 0, .45); add('P3', px[2], y0, px[3], y1, 'P2', 'L', 90, 0, .45); add('P4', px[3], y0, px[4], y1, 'P3', 'L', 90, 0, .45);
     add('GL', 0, y0 + 4, px[0], y1 - 4, 'P1', 'R', 90, 0, .3);
@@ -1688,8 +1719,9 @@ function panels3D(style, I, R) {
       add('BG1', px[1], y1, px[2], Bh, 'P2', 'T', 90, .55, .7); add('BG2', px[3], y1, px[4], Bh, 'P4', 'T', 90, .55, .7);
       add('BF', px[0], y1, px[1], Bh, 'P1', 'T', 90, .7, .85); add('BB', px[2], y1, px[3], Bh, 'P3', 'T', 90, .85, 1);
       const ob = bagOpt(I);
-      if ((I.handle || 'twist') !== 'none') handles = { px, y0, L, type: I.handle || 'twist', gap: ob.holeGap > 0 ? +ob.holeGap : Math.round(L * 0.3777), hy: y0 * 1.5 };
-      bag = { px, y0, y1, L, W, D, G, Hw: G + L + W, card: ob.card && ob.card.on ? { w: +ob.card.w || 100, h: +ob.card.h || 140, fold: !!ob.card.fold, hole: { pos: ob.card.hole || 'mid', off: +ob.card.holeOff || 10, d: +ob.card.holeD || 6 }, n: Math.max(1, Math.min(8, Math.round(+ob.card.n || 1))) } : null, base: ob.base && ob.base.on ? { m: +ob.base.margin || 0 } : null };
+      const ht = I.handle || 'twist';
+      if (CORD_H(ht) || ht === 'tape') handles = { px, y0, L, type: ht, gap: ob.holeGap > 0 ? +ob.holeGap : Math.round(L * 0.3777), hy: ht === 'tape' ? y0 * 0.6 : y0 * 1.5, holeD: ob.holeD > 0 ? +ob.holeD : 6, eyelet: CORD_H(ht) ? ob.eyelet || '' : '' };
+      bag = { px, y0, y1, L, W, D, G, Hw: G + L + W, slot: ht === 'diecut' ? slotDef(ob, L, D) : null, reinf: ht === 'diecut' && ob.reinf && ob.reinf.on ? reinfDef(ob, L, D) : null, card: ob.card && ob.card.on ? { w: +ob.card.w || 100, h: +ob.card.h || 140, fold: !!ob.card.fold, hole: { pos: ob.card.hole || 'mid', off: +ob.card.holeOff || 10, d: +ob.card.holeD || 6 }, n: Math.max(1, Math.min(8, Math.round(+ob.card.n || 1))) } : null, base: ob.base && ob.base.on ? { m: +ob.base.margin || 0 } : null };
     }
   } else {   // tray / lid & base
     const tray = (L2, W2, D2) => { const a = D2 + t, Lb = L2 + 2 * t, Wb = W2 + 2 * t, s = 1.5 + t; return { a, Lb, Wb, s, Bw: Lb + 2 * a, Bh: Wb + 2 * a, x0: a, x1: a + Lb, y0: a, y1: a + Wb }; };
@@ -2410,7 +2442,7 @@ const FACTORY_NAME = 'مصنع أضواء المستقبل للتصنيع';
 function bagSpec(I) {
   if (!I || !(+I.L)) return '';
   const cm = v => String(Math.round(+v) / 10).replace(/\.0$/, ''), b = (I && I.bag) || {}, c = b.card || {};
-  const hn = { twist: 'يد عادي (مبرومة)', flat: 'يد مجدول', rope: 'يد كرافت', ribbon: 'يد ريبون', none: 'من غير يد' }[I.handle || 'twist'] || '';
+  const hn = ({ twist: 'يد عادي (مبرومة)', flat: 'يد مجدول', rope: 'يد كرافت', ribbon: 'يد ريبون', tape: 'يد شريط ورق', diecut: 'يد مقصوصة', none: 'من غير يد' }[I.handle || 'twist'] || '') + (b.eyelet && CORD_H(I.handle) ? ' + حلق معدن' : '') + (I.handle === 'diecut' && (!b.reinf || b.reinf.on !== false) ? ' + تدعيم' : '');
   let t = cm(I.L) + ' × ' + cm(I.W) + ' × ' + cm(I.D) + ' سم — عرض × جنب × ارتفاع' + (hn ? ' — ' + hn : '');
   if (c.on) { const n = Math.max(1, Math.round(+c.n || 1)); t += ' — ' + (n > 1 ? n + ' كروت' : 'كارت') + ' ' + cm(c.w || 100) + ' × ' + cm(c.h || 140) + ' سم' + (c.fold ? ' مطوي' : ''); }
   if (b.base && b.base.on) t += ' — قاعدة تقوية';
@@ -2507,6 +2539,154 @@ async function pdfInspect(bytes, opt){
   R.vector = !R.images.length;
   return R;
 }
+// ---- finishes drawn in the PDF as named spot colours (Gold / Foil / Spot UV / Varnish / Emboss / Die …): one mask picture per kind
+// (vector shapes only; text and pictures in a spot colour are counted and reported, not drawn)
+const SPOT_KIND = [
+  ['die', /(cut|die\b|dieline|crease|contour|perf|thru|stanz|kiss|دايكت|تكسير|\bقص)/i],
+  ['foil', /(foil|gold|silver|metal|bronze|copper|stamp|hot\s*foil|تذهيب|فويل|ذهب|فضي|فضه)/i],
+  ['spot', /(spot\s*uv|\buv\b|varnish|gloss|vernis|lack|سبوت|يوفي|ورنيش)/i],
+  ['emb', /(emboss|deboss|blind|كفراج|بارز|غائر)/i]];
+const spotKind = n => { for (const [k, re] of SPOT_KIND) if (re.test(n)) return k; return null; };
+async function pdfSpotMasks(bytes, pageNo, maxPx) {
+  pageNo = pageNo || 1; maxPx = maxPx || 2000;
+  const N = bytes.length, lat = u8 => { let t = ''; for (let i = 0; i < u8.length; i += 0x8000) t += String.fromCharCode.apply(null, u8.subarray(i, Math.min(u8.length, i + 0x8000))); return t; };
+  const s = lat(bytes); if (/\/Encrypt\s/.test(s)) return null;
+  const inflate = async u8 => { for (const fmt of ['deflate', 'deflate-raw']) { try { const ds = new DecompressionStream(fmt); return new Uint8Array(await new Response(new Blob([u8]).stream().pipeThrough(ds)).arrayBuffer()); } catch (e) {} } return null; };
+  // objects: dictionary text, and the raw stream bytes (decoded on demand)
+  const objs = {}, re = /(\d+)\s+(\d+)\s+obj\b/g, starts = []; let m; while ((m = re.exec(s))) starts.push([+m[1], m.index + m[0].length]);
+  for (let k = 0; k < starts.length; k++) { const [num, a] = starts[k], b = k + 1 < starts.length ? starts[k + 1][1] : N; let body = s.slice(a, b); const e = body.indexOf('endobj'); if (e >= 0) body = body.slice(0, e);
+    const st = body.search(/\bstream\r?\n/); if (st < 0) { objs[num] = { t: body }; continue; }
+    const hdr = body.match(/\bstream\r?\n/)[0], d0 = a + st + hdr.length, dict = body.slice(0, st); let len = (dict.match(/\/Length\s+(\d+)(?!\s+\d+\s+R)/) || [])[1]; let d1 = len ? d0 + +len : s.indexOf('endstream', d0); if (d1 < d0 || d1 > N) d1 = s.indexOf('endstream', d0);
+    objs[num] = { t: dict, raw: bytes.subarray(d0, d1) }; }
+  const dec = async o => { if (o._d != null) return o._d; let data = o.raw; const fl = ((o.t.match(/\/Filter\s*(\[[^\]]*\]|\/\w+)/) || [])[1] || '').match(/\/\w+/g) || [];
+    const a85 = u8 => { const t = lat(u8).replace(/\s+/g, '').replace(/^<~/, '').replace(/~>.*$/, ''), out = []; let g = [];
+      for (let i = 0; i < t.length; i++) { const c = t[i]; if (c === 'z' && !g.length) { out.push(0, 0, 0, 0); continue; } g.push(c.charCodeAt(0) - 33); if (g.length === 5) { let v = 0; for (const d of g) v = v * 85 + d; out.push(v >>> 24 & 255, v >>> 16 & 255, v >>> 8 & 255, v & 255); g = []; } }
+      if (g.length) { const nn = g.length; while (g.length < 5) g.push(84); let v = 0; for (const d of g) v = v * 85 + d; out.push(...[v >>> 24 & 255, v >>> 16 & 255, v >>> 8 & 255, v & 255].slice(0, nn - 1)); } return new Uint8Array(out); };
+    const ahx = u8 => { const t = lat(u8).replace(/[^0-9A-Fa-f]/g, ''), out = new Uint8Array(Math.ceil(t.length / 2)); for (let i = 0; i < out.length; i++) out[i] = parseInt((t.substr(2 * i, 2) + '0').slice(0, 2), 16); return out; };
+    for (const f of fl) { if (f === '/FlateDecode' || f === '/Fl') { data = await inflate(data); if (!data) return o._d = ''; } else if (f === '/ASCII85Decode' || f === '/A85') data = a85(data); else if (f === '/ASCIIHexDecode' || f === '/AHx') data = ahx(data); else return o._d = ''; } return o._d = lat(data); };
+  // object streams
+  for (const n of Object.keys(objs)) { const o = objs[n]; if (!o.raw || !/\/Type\s*\/ObjStm/.test(o.t)) continue; const txt = await dec(o), first = +(o.t.match(/\/First\s+(\d+)/) || [])[1] || 0, nn = +(o.t.match(/\/N\s+(\d+)/) || [])[1] || 0;
+    const head = txt.slice(0, first).trim().split(/\s+/).map(Number); for (let i = 0; i < nn; i++) { const on = head[2 * i], off = head[2 * i + 1], nx = i + 1 < nn ? head[2 * i + 3] : txt.length - first; if (!objs[on]) objs[on] = { t: txt.slice(first + off, first + nx) }; } }
+  // a small PDF object parser
+  const tokRe = /<<|>>|\[|\]|\/[^\s\/\[\]<>(){}%]*|\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]*>|[+-]?\d*\.?\d+(?:[eE][+-]?\d+)?|[A-Za-z'"*]+|\{|\}/g;
+  const parse = txt => { const T = txt.match(tokRe) || []; let i = 0;
+    const val = () => { const x = T[i++]; if (x === '<<') { const d = {}; while (i < T.length && T[i] !== '>>') { const k = T[i++]; if (k[0] !== '/') continue; d[k.slice(1).replace(/#([0-9A-Fa-f]{2})/g, (a, h) => String.fromCharCode(parseInt(h, 16)))] = val(); } i++; return d; }
+      if (x === '[') { const a = []; while (i < T.length && T[i] !== ']') a.push(val()); i++; return a; }
+      if (/^[+-]?\d/.test(x) || /^[+-]?\./.test(x)) { if (/^\d+$/.test(x) && /^\d+$/.test(T[i] || '') && T[i + 1] === 'R') { i += 2; return { ref: +x }; } return +x; }
+      if (x && x[0] === '/') return { name: x.slice(1).replace(/#([0-9A-Fa-f]{2})/g, (a, h) => String.fromCharCode(parseInt(h, 16))) }; return x; };
+    return val(); };
+  const get = v => { let g = 0; while (v && v.ref != null && g++ < 20) { const o = objs[v.ref]; v = o ? parse(o.t) : null; } return v; };
+  const dictOf = n => objs[n] ? parse(objs[n].t) : null;
+  // pages in order
+  let rootRef = (s.match(/\/Root\s+(\d+)\s+0\s+R/g) || []).pop(); rootRef = rootRef ? +rootRef.match(/(\d+)/)[1] : +(Object.keys(objs).find(n => /\/Type\s*\/Catalog/.test(objs[n].t)) || 0);
+  const pages = []; const walk = (n, inh, depth) => { if (depth > 30) return; const d = dictOf(n); if (!d) return; const I2 = Object.assign({}, inh); ['MediaBox', 'CropBox', 'Resources'].forEach(k => { if (d[k]) I2[k] = d[k]; });
+    if (d.Type && d.Type.name === 'Pages' || d.Kids) (get(d.Kids) || []).forEach(k => k && k.ref != null && walk(k.ref, I2, depth + 1)); else pages.push({ n, d, inh: I2 }); };
+  const cat = dictOf(rootRef); if (cat && cat.Pages) walk(cat.Pages.ref, {}, 0);
+  const pg = pages[pageNo - 1]; if (!pg) return null;
+  const box = (get(pg.inh.CropBox) || get(pg.inh.MediaBox) || [0, 0, 612, 792]).map(v => +get(v) || 0), [bx0, by0, bx1, by1] = box, pw = bx1 - bx0, ph = by1 - by0;
+  const sc = Math.min(4, maxPx / Math.max(pw, ph)), W = Math.max(1, Math.round(pw * sc)), H = Math.max(1, Math.round(ph * sc));
+  const masks = {}, names = {}; let textSpot = 0, imgSpot = 0, painted = 0;
+  const cv = k => { if (masks[k]) return masks[k]; const c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W, H); masks[k] = c; return c; };
+  const mul = (a, b) => [a[0] * b[0] + a[1] * b[2], a[0] * b[1] + a[1] * b[3], a[2] * b[0] + a[3] * b[2], a[2] * b[1] + a[3] * b[3], a[4] * b[0] + a[5] * b[2] + b[4], a[4] * b[1] + a[5] * b[3] + b[5]];
+  const BASE = [sc, 0, 0, -sc, -bx0 * sc, by1 * sc];
+  // colour space -> list of colorant names (spot) or null (process)
+  const csNames = (cs, res) => { cs = get(cs); if (cs && cs.name && res && res.ColorSpace) { const r = get(get(res.ColorSpace)[cs.name]); if (r) cs = r; }
+    if (Array.isArray(cs)) { const t = cs[0] && cs[0].name; if (t === 'Separation') return [get(cs[1]).name]; if (t === 'DeviceN') return (get(cs[1]) || []).map(x => get(x).name); } return null; };
+  const run = async (txt, res, ctm0, depth) => {
+    if (depth > 12) return; const T = txt.match(/<<|>>|\[|\]|\/[^\s\/\[\]<>(){}%]*|\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]*>|[+-]?\d*\.?\d+(?:[eE][+-]?\d+)?|[A-Za-z'"*]+|%[^\r\n]*/g) || [];
+    const stack = []; let ctm = ctm0, gs = []; let fillCS = null, strokeCS = null, fillT = [], strokeT = [], lw = 1, path = new Path2D(), inText = false;
+    const paint = (fill, stroke, evenodd) => { const doIt = (csn, tints, isFill) => { if (!csn) return; csn.forEach((nm, ci) => { const t = +tints[ci] || 0; if (t < 0.02) return; const k = spotKind(nm || ''); if (!k) return;
+        (names[k] = names[k] || new Set()).add(nm); const g = cv(k).getContext('2d'), M = mul(ctm, BASE); g.setTransform(M[0], M[1], M[2], M[3], M[4], M[5]); g.globalAlpha = Math.min(1, t); g.fillStyle = g.strokeStyle = '#000';
+        if (isFill) g.fill(path, evenodd ? 'evenodd' : 'nonzero'); else { g.lineWidth = Math.max(lw, 0.5 / sc); g.stroke(path); } g.globalAlpha = 1; painted++; }); };
+      if (fill) doIt(fillCS, fillT, true); if (stroke) doIt(strokeCS, strokeT, false); path = new Path2D(); };
+    for (let i = 0; i < T.length; i++) { const x = T[i];
+      if (x[0] === '%') continue;
+      if (x === '<<') { let d = 1; while (++i < T.length && d) { if (T[i] === '<<') d++; else if (T[i] === '>>') d--; } i--; stack.push({}); continue; }
+      if (x === '[') { const a = []; while (++i < T.length && T[i] !== ']') a.push(/^[+-]?\d|^[+-]?\./.test(T[i]) ? +T[i] : T[i]); stack.push(a); continue; }
+      if (/^[+-]?\d|^[+-]?\./.test(x)) { stack.push(+x); continue; }
+      if (x[0] === '/') { stack.push({ name: x.slice(1).replace(/#([0-9A-Fa-f]{2})/g, (a, h) => String.fromCharCode(parseInt(h, 16))) }); continue; }
+      if (x[0] === '(' || x[0] === '<') { stack.push(x); continue; }
+      const n = k => stack.slice(-k).map(Number);
+      switch (x) {
+        case 'q': gs.push([ctm, fillCS, strokeCS, fillT, strokeT, lw]); break;
+        case 'Q': { const g = gs.pop(); if (g) [ctm, fillCS, strokeCS, fillT, strokeT, lw] = g; break; }
+        case 'cm': ctm = mul(n(6), ctm); break;
+        case 'w': lw = n(1)[0]; break;
+        case 'm': { const [a, b] = n(2); path.moveTo(a, b); break; } case 'l': { const [a, b] = n(2); path.lineTo(a, b); break; }
+        case 'c': { const v = n(6); path.bezierCurveTo(v[0], v[1], v[2], v[3], v[4], v[5]); break; }
+        case 'v': case 'y': { const v = n(4); path.quadraticCurveTo(v[0], v[1], v[2], v[3]); break; }
+        case 'h': path.closePath(); break; case 're': { const [a, b, c, d] = n(4); path.rect(a, b, c, d); break; }
+        case 'f': case 'F': paint(true, false, false); break; case 'f*': paint(true, false, true); break;
+        case 'S': paint(false, true); break; case 's': path.closePath(); paint(false, true); break;
+        case 'B': paint(true, true, false); break; case 'B*': paint(true, true, true); break; case 'b': path.closePath(); paint(true, true, false); break; case 'b*': path.closePath(); paint(true, true, true); break;
+        case 'n': path = new Path2D(); break;
+        case 'cs': fillCS = csNames(stack[stack.length - 1], res); fillT = fillCS ? fillCS.map(() => 1) : []; break;
+        case 'CS': strokeCS = csNames(stack[stack.length - 1], res); strokeT = strokeCS ? strokeCS.map(() => 1) : []; break;
+        case 'sc': case 'scn': if (fillCS) fillT = stack.filter(v => typeof v === 'number').slice(-fillCS.length); break;
+        case 'SC': case 'SCN': if (strokeCS) strokeT = stack.filter(v => typeof v === 'number').slice(-strokeCS.length); break;
+        case 'g': case 'rg': case 'k': fillCS = null; break; case 'G': case 'RG': case 'K': strokeCS = null; break;
+        case 'BT': inText = true; break; case 'ET': inText = false; break;
+        case 'Tj': case 'TJ': case "'": case '"': if (fillCS && fillCS.some(nm => spotKind(nm || ''))) textSpot++; break;
+        case 'BI': { while (i < T.length && T[i] !== 'EI') i++; break; }
+        case 'Do': { const nm = stack[stack.length - 1] && stack[stack.length - 1].name, xo = res && res.XObject ? get(get(res.XObject)[nm]) : null, xr = res && res.XObject ? get(res.XObject)[nm] : null;
+          if (xo && xr && xr.ref != null && objs[xr.ref]) { const o = objs[xr.ref], d = parse(o.t);
+            if (d.Subtype && d.Subtype.name === 'Form') { const fm = d.Matrix ? get(d.Matrix).map(v => +get(v)) : [1, 0, 0, 1, 0, 0]; await run(await dec(o), get(d.Resources) || res, mul(fm, ctm), depth + 1); }
+            else if (d.Subtype && d.Subtype.name === 'Image' && fillCS && fillCS.some(nm2 => spotKind(nm2 || ''))) imgSpot++; }
+          break; }
+      }
+      stack.length = 0;
+    }
+  };
+  const cont = get(pg.d.Contents), parts = Array.isArray(cont) ? cont : [pg.d.Contents]; let txt = '';
+  for (const c of parts) { const r = c && c.ref != null ? c.ref : null; if (r != null && objs[r]) txt += (await dec(objs[r])) + '\n'; }
+  await run(txt, get(pg.inh.Resources) || {}, [1, 0, 0, 1, 0, 0], 0);
+  const out = {}; Object.keys(names).forEach(k => out[k] = [...names[k]]);
+  return { wMm: pw * 25.4 / 72, hMm: ph * 25.4 / 72, masks, names: out, textSpot, imgSpot, painted };
+}
+
+// ---- what the bag has (finishes, extras), as small icons with a word under each: video side strip and customer page
+function bagFeats(I){
+  if (!I || I.style !== 'bag') return []; const f = I.finishes || {}, on = k => f[k] === true || +f[k] > 0, b = I.bag || {}, o = []; const A = (typeof V3 !== 'undefined' && V3 && V3.art) || {};
+  if (on('cello')) o.push({ k: 'cello', t: 'سلوفان' + (A.gloss === 'matte' ? ' مط' : A.gloss === 'gloss' ? ' لامع' : '') });
+  if (on('uv')) o.push({ k: 'uv', t: 'يوفي' }); if (on('oil')) o.push({ k: 'oil', t: 'ورنيش' });
+  if (on('spot')) o.push({ k: 'spot', t: 'سبوت يوفي' }); if (on('foil')) o.push({ k: 'foil', t: 'تذهيب', c: A.foilCol || '#d4af37' }); if (on('emb')) o.push({ k: 'emb', t: 'كفراج' });
+  if (+I.colB > 0) o.push({ k: 'inside', t: 'طباعة من جوه' });
+  const h = I.handle || 'twist'; if (h !== 'none') o.push({ k: h === 'diecut' ? 'diecut' : 'handle', t: ({ twist: 'يد مبرومة', flat: 'يد مجدول', rope: 'يد كرافت', ribbon: 'يد ريبون', tape: 'يد شريط', diecut: 'يد مقصوصة' })[h] || 'يد' });
+  if (b.eyelet && /^(twist|flat|rope|ribbon)$/.test(h)) o.push({ k: 'eyelet', t: 'حلق معدن' });
+  if (h === 'diecut' && (!b.reinf || b.reinf.on !== false)) o.push({ k: 'reinf', t: 'تدعيم' });
+  if (b.card && b.card.on) o.push({ k: 'card', t: 'كارت' }); if (b.base && b.base.on) o.push({ k: 'base', t: 'قاعدة تقوية' });
+  return o;
+}
+// one icon, drawn (the same on every device), white on a coloured disc
+function featIcon(g, k, cx, cy, r, col){
+  g.save(); g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fillStyle = 'rgba(80,14,14,.88)'; g.fill(); g.lineWidth = Math.max(1, r * 0.07); g.strokeStyle = '#c9a23a'; g.stroke();
+  const u = r * 0.5, w = '#f3e7c4'; g.strokeStyle = w; g.fillStyle = w; g.lineWidth = Math.max(1.2, r * 0.09); g.lineCap = 'round'; g.lineJoin = 'round';
+  const rr = (x, y, ww, hh, q) => { g.beginPath(); g.moveTo(x + q, y); g.arcTo(x + ww, y, x + ww, y + hh, q); g.arcTo(x + ww, y + hh, x, y + hh, q); g.arcTo(x, y + hh, x, y, q); g.arcTo(x, y, x + ww, y, q); g.closePath(); };
+  const drop = (fill) => { g.beginPath(); g.moveTo(cx, cy - u * 1.1); g.bezierCurveTo(cx + u * 0.9, cy - u * 0.1, cx + u * 0.75, cy + u * 0.9, cx, cy + u * 0.9); g.bezierCurveTo(cx - u * 0.75, cy + u * 0.9, cx - u * 0.9, cy - u * 0.1, cx, cy - u * 1.1); fill ? g.fill() : g.stroke(); };
+  switch (k) {
+    case 'cello': rr(cx - u, cy - u * 0.8, u * 2, u * 1.6, u * 0.2); g.stroke(); g.beginPath(); g.moveTo(cx - u * 0.5, cy + u * 0.5); g.lineTo(cx + u * 0.1, cy - u * 0.5); g.moveTo(cx - u * 0.05, cy + u * 0.5); g.lineTo(cx + u * 0.55, cy - u * 0.5); g.stroke(); break;
+    case 'spot': case 'uv': drop(true); g.fillStyle = 'rgba(80,14,14,.88)'; g.beginPath(); g.arc(cx - u * 0.25, cy + u * 0.2, u * 0.18, 0, Math.PI * 2); g.fill(); break;
+    case 'oil': drop(false); break;
+    case 'foil': { g.fillStyle = col || '#d4af37'; const st = (x, y, s) => { g.beginPath(); for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4, rr2 = i % 2 ? s * 0.32 : s; g.lineTo(x + rr2 * Math.cos(a - Math.PI / 2), y + rr2 * Math.sin(a - Math.PI / 2)); } g.closePath(); g.fill(); }; st(cx - u * 0.15, cy + u * 0.1, u * 0.95); st(cx + u * 0.7, cy - u * 0.6, u * 0.35); break; }
+    case 'emb': g.beginPath(); g.moveTo(cx - u, cy + u * 0.6); g.lineTo(cx - u * 0.45, cy - u * 0.3); g.lineTo(cx + u * 0.45, cy - u * 0.3); g.lineTo(cx + u, cy + u * 0.6); g.stroke(); g.beginPath(); g.moveTo(cx, cy + u * 0.3); g.lineTo(cx, cy - u * 1.0); g.moveTo(cx - u * 0.3, cy - u * 0.7); g.lineTo(cx, cy - u * 1.0); g.lineTo(cx + u * 0.3, cy - u * 0.7); g.stroke(); break;
+    case 'inside': g.beginPath(); g.moveTo(cx - u, cy - u * 0.4); g.lineTo(cx - u * 0.8, cy + u); g.lineTo(cx + u * 0.8, cy + u); g.lineTo(cx + u, cy - u * 0.4); g.stroke(); g.globalAlpha = 0.6; g.beginPath(); g.moveTo(cx - u * 0.82, cy + u * 0.1); g.lineTo(cx - u * 0.7, cy + u * 0.85); g.lineTo(cx + u * 0.7, cy + u * 0.85); g.lineTo(cx + u * 0.82, cy + u * 0.1); g.fill(); g.globalAlpha = 1; break;
+    case 'handle': g.beginPath(); g.arc(cx, cy + u * 0.2, u * 0.75, Math.PI, 0); g.stroke(); rr(cx - u, cy + u * 0.2, u * 2, u * 0.8, u * 0.1); g.stroke(); break;
+    case 'diecut': case 'reinf': rr(cx - u, cy - u * 0.8, u * 2, u * 1.6, u * 0.15); g.stroke(); rr(cx - u * 0.55, cy - u * 0.45, u * 1.1, u * 0.4, u * 0.2); g.fill(); if (k === 'reinf') { g.globalAlpha = 0.5; g.fillRect(cx - u, cy + u * 0.15, u * 2, u * 0.65); g.globalAlpha = 1; } break;
+    case 'eyelet': g.beginPath(); g.arc(cx, cy, u * 0.75, 0, Math.PI * 2); g.stroke(); g.beginPath(); g.arc(cx, cy, u * 0.35, 0, Math.PI * 2); g.stroke(); break;
+    case 'card': g.beginPath(); g.moveTo(cx - u * 0.4, cy - u); g.lineTo(cx + u * 0.4, cy - u); g.lineTo(cx + u * 0.7, cy - u * 0.6); g.lineTo(cx + u * 0.7, cy + u); g.lineTo(cx - u * 0.7, cy + u); g.lineTo(cx - u * 0.7, cy - u * 0.6); g.closePath(); g.stroke(); g.beginPath(); g.arc(cx, cy - u * 0.55, u * 0.15, 0, Math.PI * 2); g.stroke(); break;
+    case 'base': g.beginPath(); g.moveTo(cx - u, cy + u * 0.1); g.lineTo(cx - u * 0.4, cy - u * 0.5); g.lineTo(cx + u, cy - u * 0.5); g.lineTo(cx + u * 0.4, cy + u * 0.1); g.closePath(); g.stroke(); g.beginPath(); g.moveTo(cx - u, cy + u * 0.1); g.lineTo(cx - u, cy + u * 0.4); g.lineTo(cx + u * 0.4, cy + u * 0.4); g.lineTo(cx + u, cy - u * 0.2); g.stroke(); break;
+  }
+  g.restore();
+}
+// the side strip of the video: icons from the top, each with its word, appearing one after another
+function featStrip(g, W, H, feats, top, appear){
+  if (!feats || !feats.length) return; const n = feats.length, r = Math.round(Math.min(W, H) * 0.045), gap = r * 2 + Math.round(r * 0.95), x = W - r - Math.round(r * 0.6);
+  g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.direction = 'rtl'; g.textAlign = 'center'; g.font = 'bold ' + Math.round(r * 0.42) + 'px Tahoma, Arial, sans-serif';
+  feats.forEach((f, i) => { const a = appear == null ? 1 : Math.max(0, Math.min(1, appear * (n + 1) - i)); if (a <= 0) return; g.globalAlpha = a; const y = top + r + i * gap;
+    featIcon(g, f.k, x, y, r, f.c); const tw = g.measureText(f.t).width + r * 0.4; g.fillStyle = 'rgba(80,14,14,.8)'; g.fillRect(x - tw / 2, y + r + 2, tw, r * 0.6); g.fillStyle = '#fff'; g.fillText(f.t, x, y + r + r * 0.48); });
+  g.restore();
+}
+
 
 
 /* QR code — Kazuhiko Arase, MIT license (vendored from qrcode-terminal) */
@@ -3833,7 +4013,7 @@ function _glBag(V, Q, view, rot, cam, ctx) {
   let mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
   const quad = (Pw, n, cO, cI, uvO, uvI, hasO, hasI) => {   // Pw: 4 view-space points
     const ids = [0, 1, 2, 0, 2, 3];
-    ids.forEach(k => push(data, Pw[k], n, cO, cI, hasO ? uvO[k] : [0, 0], hasI ? uvI[k] : [0, 0], [hasO ? 1 : 0, hasI ? 1 : 0, 0, 0], 0));
+    ids.forEach(k => push(data, Pw[k], n.length === 4 ? n[k] : n, cO, cI, hasO ? uvO[k] : [0, 0], hasI ? uvI[k] : [0, 0], [hasO ? 1 : 0, hasI ? 1 : 0, 0, 0], 0));
   };
   Q.forEach(q => {
     if (q.line || q.edge) return;
@@ -3855,8 +4035,11 @@ function _glBag(V, Q, view, rot, cam, ctx) {
     const Pv = q.w.map(view); Pv.forEach(p => { for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], p[k]); mx[k] = Math.max(mx[k], p[k]); } });
     const n = nrm(cross(sub3(Pv[1], Pv[0]), sub3(Pv[3], Pv[0])));
     const cO = q.colO ? rgb(q.colO) : outC, cI = q.colI ? rgb(q.colI) : inC;
-    if (q.sub && q.sub.length) q.sub.forEach(c => { const Pc = c.w.map(view), nc = nrm(cross(sub3(Pc[2], Pc[0]), sub3(Pc[3], Pc[1])));
-      quad(Pc, nc, cO, cI, c.o && q.to ? c.o.map(uv => at(q.to.img, uv)) : null, c.i && q.ti ? c.i.map(uv => at(q.ti.img, uv)) : null, !!(c.o && q.to), !!(c.i && q.ti)); });
+    if (q.sub && q.sub.length) {   // a bent panel in many cells: smooth normals across the cells, so no squares of light show
+      const cells = q.sub.map(c => { const Pc = c.w.map(view); return { c, Pc, nc: nrm(cross(sub3(Pc[2], Pc[0]), sub3(Pc[3], Pc[1]))) }; }), acc = new Map(), kf = p => p.map(v => Math.round(v * 4)).join(',');
+      cells.forEach(({ Pc, nc }) => Pc.forEach(p => { const k = kf(p), a = acc.get(k) || []; a.push(nc); acc.set(k, a); }));
+      cells.forEach(({ c, Pc, nc }) => { const vn = Pc.map(p => { const a = acc.get(kf(p)) || [nc], s = [0, 0, 0]; a.forEach(m => { if (m[0] * nc[0] + m[1] * nc[1] + m[2] * nc[2] > 0.9) for (let j = 0; j < 3; j++) s[j] += m[j]; }); return nrm(s); });
+      quad(Pc, vn, cO, cI, c.o && q.to ? c.o.map(uv => at(q.to.img, uv)) : null, c.i && q.ti ? c.i.map(uv => at(q.ti.img, uv)) : null, !!(c.o && q.to), !!(c.i && q.ti)); }); }
     else quad(Pv, n, cO, cI, q.to && q.to.uv ? q.to.uv.map(uv => at(q.to.img, uv)) : null, q.ti && q.ti.uv ? q.ti.uv.map(uv => at(q.ti.img, uv)) : null, !!(q.to && q.to.uv), !!(q.ti && q.ti.uv));
   });
   // soft shadow on the floor under the standing bag
@@ -3979,7 +4162,15 @@ function Viewer3D(canvas) {
           if (art.inside && tk < 0) { iI = art.inside; uI = (x, z) => [1 - x / Bw, z / Bh]; }
         } else if (!extra && V.img) { iO = V.img; uO = full; }
         const C4 = [[p.x0, p.y0], [p.x1, p.y0], [p.x1, p.y1], [p.x0, p.y1]], sub = [];
-        if (iO || iI || disp) {   // small cells only to keep the picture straight in perspective (and to bend the gusset); the panel itself is one piece
+        const sl = isBag && m.bag.slot && (k === 0 || k === 2 || tk === 0 || tk === 2) ? (() => { const S2 = m.bag.slot, cx = (p.x0 + p.x1) / 2, y0b = m.bag.y0;
+          return tk >= 0 ? { cx, ya: y0b - S2.top - S2.h, yb: y0b - S2.top, w: S2.w } : { cx, ya: y0b + S2.top, yb: y0b + S2.top + S2.h, w: S2.w }; })() : null;
+        if (sl) {   // die-cut handle: cells round the slot, none inside it
+          const r2 = (sl.yb - sl.ya) / 2, cy = (sl.ya + sl.yb) / 2, inS = (x, z) => { const dx = Math.max(0, Math.abs(x - sl.cx) - (sl.w / 2 - r2)); return dx * dx + (z - cy) * (z - cy) < r2 * r2; };
+          const lines = (a, b, n, f0, f1) => { const L2 = []; for (let i = 0; i <= n; i++) L2.push(a + (b - a) * i / n); for (let v = f0; v <= f1; v += 2.5) if (v > a && v < b) L2.push(v); return [...new Set(L2.map(v => Math.round(v * 100) / 100))].sort((u, w) => u - w); };
+          const xs = lines(p.x0, p.x1, 6, sl.cx - sl.w / 2 - 2, sl.cx + sl.w / 2 + 2), zs = lines(p.y0, p.y1, 6, sl.ya - 2, sl.yb + 2);
+          for (let i = 0; i + 1 < xs.length; i++) for (let j = 0; j + 1 < zs.length; j++) { const X0 = xs[i], X1 = xs[i + 1], Z0 = zs[j], Z1 = zs[j + 1]; if (inS((X0 + X1) / 2, (Z0 + Z1) / 2)) continue;
+            const pts = [[X0, Z0], [X1, Z0], [X1, Z1], [X0, Z1]]; sub.push({ w: pts.map(([x, z]) => WP(x, z)), o: iO ? pts.map(([x, z]) => uO(x, z)) : null, i: iI ? pts.map(([x, z]) => uI(x, z)) : null }); } }
+        else if (iO || iI || disp) {   // small cells only to keep the picture straight in perspective (and to bend the gusset); the panel itself is one piece
           let nx = Math.max(1, Math.min(6, Math.round(pw / 45))), nz = Math.max(1, Math.min(6, Math.round(ph / 45))); if (disp) { nx = Math.max(2, nx + (nx % 2)); nz = Math.max(nz, tk >= 0 ? 1 : 6); }
           for (let i = 0; i < nx; i++) for (let j = 0; j < nz; j++) {
             const X0 = p.x0 + pw * i / nx, X1 = p.x0 + pw * (i + 1) / nx, Z0 = p.y0 + ph * j / nz, Z1 = p.y0 + ph * (j + 1) / nz, pts = [[X0, Z0], [X1, Z0], [X1, Z1], [X0, Z1]];
@@ -4001,6 +4192,17 @@ function Viewer3D(canvas) {
     function bagExtras(m, Mof) {
       const b = m.bag, M1 = Mof.P1, M3 = Mof.P3, px = b.px, hv = m.handles;
       m.ground = [M4.ap(M1, [px[0], 0, b.y1]), M4.ap(M1, [px[1], 0, b.y1]), M4.ap(M3, [px[2], 0, b.y1]), M4.ap(M3, [px[3], 0, b.y1])];
+      if (b.reinf) {   // die-cut handle: the reinforcement board glued inside each wall at the top, the slot cut through it too
+        const rf = b.reinf, S2 = rf.slot; [[M1, px[0], px[1]], [M3, px[2], px[3]]].forEach(([Mw, xa, xb]) => {
+          const cx = (xa + xb) / 2, x0 = cx - rf.w / 2, x1 = cx + rf.w / 2, z0 = b.y0 + 1, z1 = b.y0 + rf.h, yy = -2.6, ya = b.y0 + S2.top, yb = ya + S2.h, r2 = S2.h / 2, cy = (ya + yb) / 2;
+          const inS = (x, z) => { const dx = Math.max(0, Math.abs(x - cx) - (S2.w / 2 - r2)); return dx * dx + (z - cy) * (z - cy) < r2 * r2; };
+          const lines = (a, c, n, f0, f1) => { const L2 = []; for (let i = 0; i <= n; i++) L2.push(a + (c - a) * i / n); for (let v = f0; v <= f1; v += 2.5) if (v > a && v < c) L2.push(v); return [...new Set(L2.map(v => Math.round(v * 100) / 100))].sort((u, w) => u - w); };
+          const xs = lines(x0, x1, 4, cx - S2.w / 2 - 2, cx + S2.w / 2 + 2), zs = lines(z0, z1, 3, ya - 2, yb + 2), sub = [];
+          for (let i = 0; i + 1 < xs.length; i++) for (let j = 0; j + 1 < zs.length; j++) { if (inS((xs[i] + xs[i + 1]) / 2, (zs[j] + zs[j + 1]) / 2)) continue;
+            sub.push({ w: [[xs[i], zs[j]], [xs[i + 1], zs[j]], [xs[i + 1], zs[j + 1]], [xs[i], zs[j + 1]]].map(([x, z]) => M4.ap(Mw, [x, yy, z])), o: null, i: null }); }
+          const C4 = [[x0, z0], [x1, z0], [x1, z1], [x0, z1]].map(([x, z]) => M4.ap(Mw, [x, yy, z]));
+          quads.push({ w: C4, uv: [[0, 0], [1, 0], [1, 1], [0, 1]], to: null, ti: null, sub, colO: '#c2a77a', colI: '#c2a77a', e: [true, true, true, true], over: { id: Mw === M1 ? 'P1' : 'P3', side: 'in' } }); });
+      }
       if (b.base) {   // board lying on the bottom, inside
         const zb = b.y1 - (5 * Math.max(0.6, 0.004 * Math.max(m.Bw, m.Bh)) + 3), A = M4.ap(M1, [px[0], 0, zb]), B = M4.ap(M1, [px[1], 0, zb]), C = M4.ap(M3, [px[2], 0, zb]), D = M4.ap(M3, [px[3], 0, zb]);
         const c = [0, 1, 2].map(k => (A[k] + B[k] + C[k] + D[k]) / 4), sub = (p, q) => p.map((v, k) => v - q[k]), ln = v => Math.hypot(...v) || 1;
@@ -4019,23 +4221,30 @@ function Viewer3D(canvas) {
           const cr = hv ? ({ twist: 4.5, flat: 7, rope: 6, ribbon: 16 }[hv.type] || 5) / 2 : 2, offH = b.card.hole && b.card.hole.off > 0 ? +b.card.hole.off : 10;
           const thrB = (dir === 'h' ? offH * (Math.sin(phi) + 0.35) : dir === 'v' ? offH * Math.sin(th) : 0) + cr + 1.2, thrF = cr + 1.2;
           cards.push({ i, iF, iB, dir, Lg, Sh, th, phi, cr, thrB, thrF, back: strand >= 2, a0: Math.PI * (strand % 2 === 0 ? 0.2 + 0.1 * round : 0.8 - 0.1 * round), bul: dir === 'v' ? 2 + (Lg / 2 - 8) * Math.sin(th) : dir === 'h' ? 9 : 6 }); } }
-      const tall = hv && hv.type === 'ribbon' ? 1.25 : 1.05, clr = hv ? ({ twist: 4.5, flat: 7, rope: 6 }[hv.type] || 2) / 2 + 1 : 1.5;   // the cord runs just off the wall, never half inside it
+      const tall = hv && hv.type === 'ribbon' ? 1.25 : 1.05, clr = hv ? (hv.type === 'tape' ? -2.4 : ({ twist: 4.5, flat: 7, rope: 6 }[hv.type] || 2) / 2 + 1) : 1.5;   // paper tape: glued inside, comes up over the edge   // the cord runs just off the wall, never half inside it
       const arc = (xa, xb, a, bumps) => { const xc = (xa + xb) / 2, hw = Math.min(hv.gap / 2, (xb - xa) / 2 - 8), up = Math.max(hw * tall, 45), y = hv.hy;
         let bump = 0, thr = 0; (bumps || []).forEach(c => { const g = Math.exp(-Math.pow((a - c.a0) / 0.26, 2)); bump = Math.max(bump, c.bul * g);
           if (c.thrF != null) { const sg = Math.tanh((a - c.a0) / 0.045); thr += (sg < 0 ? -c.thrB : c.thrF) * Math.abs(sg) * g; } });
         bump += thr;
         return [xc - hw * Math.cos(a), clr + Math.sin(a) * 2 + bump, y - (y - b.y0 + up) * Math.pow(Math.sin(a), 0.85)]; };
       if (hv) {
-        const def = { twist: '#e8e0cc', flat: '#d9c7a3', rope: '#a57c52', ribbon: '#b3262e' }[hv.type] || '#a57c52', col = V.handleCol || def;
-        const mm = { twist: 4.5, flat: 7, rope: 6, ribbon: 16 }[hv.type] || 5;
+        const def = { twist: '#e8e0cc', flat: '#d9c7a3', rope: '#a57c52', ribbon: '#b3262e', tape: '#d8c39c' }[hv.type] || '#a57c52', col = V.handleCol || def;
+        const mm = { twist: 4.5, flat: 7, rope: 6, ribbon: 16, tape: 15 }[hv.type] || 5;
         [['P1', px[0], px[1], M1, cards.filter(c => !c.back)], ['P3', px[2], px[3], M3, cards.filter(c => c.back)]].forEach(([id, xa, xb, M, bul]) => {
           const pts = []; for (let k = 0; k <= 20; k++) pts.push(M4.ap(M, arc(xa, xb, Math.PI * k / 20, bul)));
           for (let k = 0; k < 20; k++) quads.push({ line: true, w: [pts[k], pts[k + 1]], col, mm, kind: hv.type, k, over: { id, side: 'out', rank: 1.5, soft: true } });
           const tp = [], NS = bul.length ? 220 : 64; for (let k = 0; k <= NS; k++) tp.push(M4.ap(M, arc(xa, xb, Math.PI * k / NS, bul)));   // fine steps where it goes through a card
           const o0 = M4.ap(M, [(xa + xb) / 2, 0, b.y0]), o1 = M4.ap(M, [(xa + xb) / 2, 1, b.y0]);
-          quads.push({ tube: true, pts: tp, w: tp, nrm: [o1[0] - o0[0], o1[1] - o0[1], o1[2] - o0[2]], col, mm, kind: hv.type });
+          quads.push({ tube: true, pts: tp, w: tp, nrm: [o1[0] - o0[0], o1[1] - o0[1], o1[2] - o0[2]], col, mm, kind: hv.type === 'tape' ? 'ribbon' : hv.type });
+          if (hv.type === 'tape') {   // the glued ends: a short flat strip down the inside of the turn
+            [xa + (xb - xa) / 2 - Math.min(hv.gap / 2, (xb - xa) / 2 - 8), xa + (xb - xa) / 2 + Math.min(hv.gap / 2, (xb - xa) / 2 - 8)].forEach(ex => { const g2 = [[ex, clr, hv.hy], [ex, clr, hv.hy + 22]].map(q => M4.ap(M, q)); quads.push({ tube: true, pts: g2, w: g2, nrm: [o1[0] - o0[0], o1[1] - o0[1], o1[2] - o0[2]], col, mm, kind: 'ribbon' }); }); }
+          if (hv.eyelet) {   // metal eyelets round the holes, outside and on the turn inside
+            const ec = { silver: '#c9ccd3', gold: '#d4af37', black: '#2a2a2a' }[hv.eyelet] || '#c9ccd3', er = (hv.holeD || 6) / 2 + 1.3;
+            [xa + (xb - xa) / 2 - Math.min(hv.gap / 2, (xb - xa) / 2 - 8), xa + (xb - xa) / 2 + Math.min(hv.gap / 2, (xb - xa) / 2 - 8)].forEach(ex => [0.7, -1.6].forEach(yy => {
+              const rp = []; for (let k = 0; k <= 20; k++) { const a = k / 20 * Math.PI * 2; rp.push(M4.ap(M, [ex + er * Math.cos(a), yy, hv.hy + er * Math.sin(a)])); }
+              quads.push({ tube: true, pts: rp, w: rp, nrm: [o1[0] - o0[0], o1[1] - o0[1], o1[2] - o0[2]], col: ec, mm: 1.8, kind: 'tip' }); })); }
           // inside the bag: the cord comes through the hole and ends in a plastic tip (cords) or a knot (ribbon); paper handles are glued, nothing shows
-          if (hv.type !== 'rope') [[tp[0], -1], [tp[tp.length - 1], 1]].forEach(([e, sx], ei) => {
+          if (CORD_H(hv.type) && hv.type !== 'rope') [[tp[0], -1], [tp[tp.length - 1], 1]].forEach(([e, sx], ei) => {
             const ex = (sx < 0 ? xa + (xb - xa) / 2 - Math.min(hv.gap / 2, (xb - xa) / 2 - 8) : xa + (xb - xa) / 2 + Math.min(hv.gap / 2, (xb - xa) / 2 - 8)), z = hv.hy;
             const q0 = M4.ap(M, [0, 0, 0]), q1 = M4.ap(M, [1, 0, 0]), nr = [q1[0] - q0[0], q1[1] - q0[1], q1[2] - q0[2]];   // along the wall: never parallel to a cord going through it
             // the hole: a small dark ring round the cord, through the wall and the turn-in behind it
@@ -4253,6 +4462,10 @@ function Viewer3D(canvas) {
     V._camM = null; V.set(panels3D('bag', o.I, { t: o.t || 0.3 }));
     const sz = bagSpec(o.I); $('#info').textContent = ''; const b = document.createElement('b'); b.textContent = (OPTS.length > 1 ? o.label + ' — ' : 'المقاس: '); $('#info').append(b, document.createTextNode(sz)); $('#info').hidden = !sz;
     document.querySelectorAll('#opts button').forEach((x, k) => x.setAttribute('aria-pressed', k === i ? 'true' : 'false'));
+    // what the bag has: small icons with a word under each
+    { const fb = $('#feats'); fb.textContent = ''; const F = o.feats || D.feats || []; fb.hidden = !F.length;
+      F.forEach(f => { const fig = document.createElement('figure'), c = document.createElement('canvas'), dp = window.devicePixelRatio || 1; c.width = c.height = Math.round(36 * dp); const g = c.getContext('2d'); g.scale(dp, dp); featIcon(g, f.k, 18, 18, 17, f.c);
+        const cap = document.createElement('figcaption'); cap.textContent = f.t; fig.append(c, cap); fb.append(fig); }); }
     // prices (only when the factory chose to show them)
     const pr = $('#prices'); pr.textContent = ''; pr.hidden = !(D.showPrices && o.prices && o.prices.length);
     if (!pr.hidden) { const t = document.createElement('table'), h = t.insertRow(); ['الكمية', 'سعر الكيس', 'الإجمالي'].forEach(x => { const th = document.createElement('th'); th.textContent = x; h.append(th); });
