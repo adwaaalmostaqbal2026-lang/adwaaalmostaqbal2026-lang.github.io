@@ -4013,7 +4013,7 @@ function _glBag(V, Q, view, rot, cam, ctx) {
   let mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
   const quad = (Pw, n, cO, cI, uvO, uvI, hasO, hasI) => {   // Pw: 4 view-space points
     const ids = [0, 1, 2, 0, 2, 3];
-    ids.forEach(k => push(data, Pw[k], n, cO, cI, hasO ? uvO[k] : [0, 0], hasI ? uvI[k] : [0, 0], [hasO ? 1 : 0, hasI ? 1 : 0, 0, 0], 0));
+    ids.forEach(k => push(data, Pw[k], n.length === 4 ? n[k] : n, cO, cI, hasO ? uvO[k] : [0, 0], hasI ? uvI[k] : [0, 0], [hasO ? 1 : 0, hasI ? 1 : 0, 0, 0], 0));
   };
   Q.forEach(q => {
     if (q.line || q.edge) return;
@@ -4035,8 +4035,11 @@ function _glBag(V, Q, view, rot, cam, ctx) {
     const Pv = q.w.map(view); Pv.forEach(p => { for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], p[k]); mx[k] = Math.max(mx[k], p[k]); } });
     const n = nrm(cross(sub3(Pv[1], Pv[0]), sub3(Pv[3], Pv[0])));
     const cO = q.colO ? rgb(q.colO) : outC, cI = q.colI ? rgb(q.colI) : inC;
-    if (q.sub && q.sub.length) q.sub.forEach(c => { const Pc = c.w.map(view), nc = nrm(cross(sub3(Pc[2], Pc[0]), sub3(Pc[3], Pc[1])));
-      quad(Pc, nc, cO, cI, c.o && q.to ? c.o.map(uv => at(q.to.img, uv)) : null, c.i && q.ti ? c.i.map(uv => at(q.ti.img, uv)) : null, !!(c.o && q.to), !!(c.i && q.ti)); });
+    if (q.sub && q.sub.length) {   // a bent panel in many cells: smooth normals across the cells, so no squares of light show
+      const cells = q.sub.map(c => { const Pc = c.w.map(view); return { c, Pc, nc: nrm(cross(sub3(Pc[2], Pc[0]), sub3(Pc[3], Pc[1]))) }; }), acc = new Map(), kf = p => p.map(v => Math.round(v * 4)).join(',');
+      cells.forEach(({ Pc, nc }) => Pc.forEach(p => { const k = kf(p), a = acc.get(k) || []; a.push(nc); acc.set(k, a); }));
+      cells.forEach(({ c, Pc, nc }) => { const vn = Pc.map(p => { const a = acc.get(kf(p)) || [nc], s = [0, 0, 0]; a.forEach(m => { if (m[0] * nc[0] + m[1] * nc[1] + m[2] * nc[2] > 0.9) for (let j = 0; j < 3; j++) s[j] += m[j]; }); return nrm(s); });
+      quad(Pc, vn, cO, cI, c.o && q.to ? c.o.map(uv => at(q.to.img, uv)) : null, c.i && q.ti ? c.i.map(uv => at(q.ti.img, uv)) : null, !!(c.o && q.to), !!(c.i && q.ti)); }); }
     else quad(Pv, n, cO, cI, q.to && q.to.uv ? q.to.uv.map(uv => at(q.to.img, uv)) : null, q.ti && q.ti.uv ? q.ti.uv.map(uv => at(q.ti.img, uv)) : null, !!(q.to && q.to.uv), !!(q.ti && q.ti.uv));
   });
   // soft shadow on the floor under the standing bag
