@@ -415,10 +415,20 @@ const NEST = (() => {
 // ---- EngView library style: data loading, resize + nesting cache ----
 let LIBDATA = null, LIBTHUMBS = null, LIBLOADING = null;
 const LIBCACHE = new Map();
+// the library lives encrypted on the pages site; the key comes from the server only after sign-in
+let LIBK = null;
+async function libBin(n) {
+  if (!LIBK) LIBK = (async () => { const tok = (() => { try { return localStorage.getItem('adwaaTok'); } catch (e) { return null; } })();
+    const r = await window.GAS.run('libKey', tok); const raw = new Uint8Array(r.key.match(/../g).map(h => parseInt(h, 16)));
+    return { url: r.url, key: await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['decrypt']) }; })().catch(e => { LIBK = null; throw e; });
+  const K = await LIBK, b = new Uint8Array(await (await fetch(K.url + n + '.bin', { cache: 'force-cache' })).arrayBuffer());
+  const z = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b.slice(0, 12) }, K.key, b.slice(12));
+  return JSON.parse(await new Response(new Blob([z]).stream().pipeThrough(new DecompressionStream('gzip'))).text());
+}
 function libLoad() {
   if (LIBDATA) return Promise.resolve(LIBDATA);
-  if (!LIBLOADING) LIBLOADING = Promise.all([fetch('libgeo.json').then(r => r.json()), fetch('libdt.json').then(r => r.json()).catch(() => null), fetch('ev3d.json').then(r => r.json()).catch(() => null)])
-    .then(([d, t, e3]) => { LIBEV3D = e3 || {}; LIBDT = t; if (t) LIBTPL = { F: EVX.tplOf(t.T), E: EVX.tplOf(['LSCf(d)', 'if1(d,0.6, 0.85, 0.5, 0.75, 1)', 'GlueCorr(d)', 'd', 'Flat', '1', 'Chamfer', '2', 'LineExt', '3']) }; LIBDATA = d; return d; });
+  if (!LIBLOADING) LIBLOADING = libBin('g').then(d => { d.forEach(D => { if (D.l === 'F' && D.c === '0427') D.factory = true; });   // 0427 = the factory's own die (Project5)
+    LIBEV3D = {}; LIBDT = null; LIBDATA = d; return d; }).catch(e => { LIBLOADING = null; throw e; });
   return LIBLOADING;
 }
 // EngView parametric expressions: tiny parser/evaluator for the library's parameter formulas
@@ -534,7 +544,7 @@ function libDTAdd(D, I) {
 }
 function libThumbs() {
   if (LIBTHUMBS) return Promise.resolve(LIBTHUMBS);
-  return fetch('libthumbs.json').then(r => r.json()).then(d => { LIBTHUMBS = d; return d; }).catch(() => ({}));
+  return libBin('t').then(d => { LIBTHUMBS = d; return d; }).catch(() => ({}));
 }
 function libDesign(code) { return LIBDATA ? LIBDATA.find(d => d.l + ':' + d.c === code) : null; }
 // glue default: long-seam / glued styles need a glue line, unglued trays and folders do not
@@ -4123,8 +4133,10 @@ function _glBag(V, Q, view, rot, cam, ctx) {
     const ids = [0, 1, 2, 0, 2, 3];
     ids.forEach(k => push(data, Pw[k], n.length === 4 ? n[k] : n, cO, cI, hasO ? uvO[k] : [0, 0], hasI ? uvI[k] : [0, 0], [hasO ? 1 : 0, hasI ? 1 : 0, 0, 0], 0));
   };
+  const edC = rgb(V.edgeCol || (V.flute ? '#a8875e' : '#efece4'));
   Q.forEach(q => {
-    if (q.line || q.edge) return;
+    if (q.line) return;
+    if (q.edge) { const Pv = q.w.map(view), n = nrm(cross(sub3(Pv[1], Pv[0]), sub3(Pv[3], Pv[0]))); quad(Pv, n, edC, edC, null, null, false, false); return; }
     if (q.tube) {   // handle: a round cord (or a flat ribbon) along the arc
       const P = q.pts.map(view), N = rot(q.nrm), col = rgb(q.col), r = q.mm / 2, mode = { twist: 1, rope: 2, flat: 3, ribbon: 4, tip: 5, knot: 6 }[q.kind] || 1;
       const seg = mode === 4 ? 6 : 10, len = []; let s = 0; P.forEach((p, i) => { if (i) s += Math.hypot(...sub3(p, P[i - 1])); len.push(s); });
@@ -4153,6 +4165,11 @@ function _glBag(V, Q, view, rot, cam, ctx) {
       cells.forEach(({ Pc, nc }) => Pc.forEach(p => { const k = kf(p), a = acc.get(k) || []; a.push(nc); acc.set(k, a); }));
       cells.forEach(({ c, Pc, nc }) => { const vn = Pc.map(p => { const a = acc.get(kf(p)) || [nc], s = [0, 0, 0]; a.forEach(m => { if (m[0] * nc[0] + m[1] * nc[1] + m[2] * nc[2] > 0.9) for (let j = 0; j < 3; j++) s[j] += m[j]; }); return nrm(s); });
       quad(Pc, vn, cO, cI, c.o && q.to ? c.o.map(uv => at(q.to.img, uv)) : null, c.i && q.ti ? c.i.map(uv => at(q.ti.img, uv)) : null, !!(c.o && q.to), !!(c.i && q.ti)); }); }
+    else if (Pv.length !== 4 || q.poly) {   // folding-carton panel of any shape: ear clipping on its flat outline
+      const Bw = V.model.Bw || 1, Bh = V.model.Bh || 1; let ids = q.key && _triCache.get(q.key); if (!ids) { ids = _triangulate(q.uv.map(([a, b]) => [a * Bw, b * Bh])); if (q.key) _triCache.set(q.key, ids); }
+      let nn = [0, 0, 0]; for (let i = 0; i < Pv.length; i++) { const a = Pv[i], b = Pv[(i + 1) % Pv.length]; nn[0] += (a[1] - b[1]) * (a[2] + b[2]); nn[1] += (a[2] - b[2]) * (a[0] + b[0]); nn[2] += (a[0] - b[0]) * (a[1] + b[1]); } nn = nrm(nn);
+      const hO = !!(q.to && q.to.uv), hI = !!(q.ti && q.ti.uv);
+      ids.forEach(k => push(data, Pv[k], nn, cO, cI, hO ? at(q.to.img, q.to.uv[k]) : [0, 0], hI ? at(q.ti.img, q.ti.uv[k]) : [0, 0], [hO ? 1 : 0, hI ? 1 : 0, 0, 0], 0)); }
     else quad(Pv, n, cO, cI, q.to && q.to.uv ? q.to.uv.map(uv => at(q.to.img, uv)) : null, q.ti && q.ti.uv ? q.ti.uv.map(uv => at(q.ti.img, uv)) : null, !!(q.to && q.to.uv), !!(q.ti && q.ti.uv));
   });
   // soft shadow on the floor under the standing bag
@@ -4227,8 +4244,9 @@ function Viewer3D(canvas) {
       m.faces.forEach(f => {
         const LW = lw(f), M = M4.mul(G, LW ? M4.mul(LW, Ms[f.id]) : Ms[f.id]), P0 = f.poly.map(([x, z]) => M4.ap(M, [x, 0, z])), P1 = f.poly.map(([x, z]) => M4.ap(M, [x, -th, z]));
         const uv = f.poly.map(([x, z]) => [x / m.Bw, z / m.Bh]), e = f.poly.map(() => true);
-        quads.push({ w: P0, uv, tex: true, e, poly: true, skin: 'out', key: f.poly });
-        quads.push({ w: P1, uv, tex: true, e, poly: true, skin: 'in', key: f.poly });
+        const fa = V.art || {}, pO = fa.flat ? finImg(fa.flat, { foil: fa.foilA, foil2: fa.foil2A, foil3: fa.foil3A, foil4: fa.foil4A, spot: fa.spotA, emb: fa.embA, deb: fa.debA, white: fa.whiteA }) : V.img, uvM = uv.map(([a, b]) => [1 - a, b]), uvO = m.stand ? uv : uvM, uvI = m.stand ? uvM : uv;   // boxes lying inside-up are built from the inside: the print-side file goes on mirrored
+        quads.push({ w: P0, uv, tex: true, e, poly: true, skin: 'out', key: f.poly, to: pO ? { img: pO, uv: uvO } : null, ti: pO ? { img: pO, uv: uvO } : null, colO: V.outCol, colI: V.outCol });
+        quads.push({ w: P1, uv, tex: true, e, poly: true, skin: 'in', key: f.poly, to: fa.inside ? { img: fa.inside, uv: uvI } : null, ti: fa.inside ? { img: fa.inside, uv: uvI } : null, colO: V.inCol, colI: V.inCol });
         const axes = m._hinge[f.id] || [], n = f.poly.length;
         for (let i = 0; i < n; i++) { const j = (i + 1) % n; if (onAxis(f.poly[i], f.poly[j], axes)) continue;
           quads.push({ w: [P0[i], P0[j], P1[j], P1[i]], uv: [[0, 0], [0, 0], [0, 0], [0, 0]], tex: false, e: [false, false, false, false], edge: true }); }
@@ -4280,7 +4298,8 @@ function Viewer3D(canvas) {
           else if ((tk === 0 && fF) || (tk === 2 && fB)) {   // turn-in flap: the face design carries on over the fold
             const H = m.bag.y1 - m.bag.y0; iO = tk === 0 ? fF : fB; uO = (x, z) => [(x - p.x0) / pw, Math.min(1, (p.y1 - z) / H)]; }
           if (art.inside && tk < 0) { iI = art.inside; uI = (x, z) => [1 - x / Bw, z / Bh]; }
-        } else if (!extra && V.img) { iO = V.img; uO = full; }
+        } else if (!extra && (boxArt || V.img)) { const tv = m.mode !== 'stand';   // turned-over styles (trays, lids) are built from the inside: the print-side file goes on mirrored
+          iO = boxArt || V.img; uO = tv ? (x, z) => [1 - x / Bw, z / Bh] : full; if (art.inside) { iI = art.inside; uI = tv ? full : (x, z) => [1 - x / Bw, z / Bh]; } }
         const qy0 = isBag && /^BG\d$/.test(p.id) ? p.y0 + 3 : p.y0;   // bag bottom: the gusset flaps start a little off their fold, so they never cut through the gusset
         const qx = isBag && /^B[FB]$/.test(p.id) ? 2 : 0;   // front / back bottom flaps stop short of the gusset folds
         const C4 = [[p.x0 + qx, qy0], [p.x1 - qx, qy0], [p.x1 - qx, p.y1], [p.x0 + qx, p.y1]], sub = [];
@@ -4304,6 +4323,7 @@ function Viewer3D(canvas) {
       if (isBag && t > 0.9) bagExtras(m, Mof);
     };
     const art = V.art || {}; fitPad.on = !!art.fit; fitPad.col = V.outCol;
+    const boxArt = !m.bag && art.flat ? finImg(art.flat, { foil: art.foilA, foil2: art.foil2A, foil3: art.foil3A, foil4: art.foil4A, spot: art.spotA, emb: art.embA, deb: art.debA, white: art.whiteA }) : null;
     const isBag = !!m.bag, gus = m.bag ? (m.bag.W / 2) * Math.sin(0.5) * _ease((t - 0.7) / 0.3) : 0;
     const bil = (P4, u, v) => [0, 1, 2].map(k => (P4[0][k] * (1 - u) + P4[1][k] * u) * (1 - v) + (P4[3][k] * (1 - u) + P4[2][k] * u) * v);
     // a flat piece (card half, base board) as one item, with picture cells
@@ -4470,7 +4490,7 @@ function Viewer3D(canvas) {
       return [x1, y2, z2]; };
     const proj = v => { const k = (f / size) * 0.78 * dist / Math.max(1e-3, dist - v[2]); return [W / 2 + v[0] * k, H / 2 - v[1] * k]; };
     const light = [0.35, 0.8, 0.5], ln = Math.hypot(...light);
-    if (V.model && V.model.bag && !V.noGL) {
+    if (V.model && (V.model.bag || V.img || (V.art && V.art.flat) || !V.flute) && !V.noGL) {
       const rot = p => { const x1 = cy * p[0] + sy * p[2], z1 = -sy * p[0] + cy * p[2]; return [x1, cp * p[1] - sp * z1, sp * p[1] + cp * z1]; };
       try { if (_glBag(V, Q, view, rot, { W, H, dpr, size, dist, K: (f / size) * 0.78 * dist }, ctx)) return; } catch (e) { console.warn('bag GL', e); V.noGL = true; }
     }
@@ -4588,8 +4608,9 @@ function Viewer3D(canvas) {
     V.art = Object.assign({ mode: 'face' }, o.art || {}, imgs);
     V.outCol = col.out || '#f4f1ea'; V.inCol = col.in || V.outCol; V.handleCol = col.handle || null; V.tipCol = col.tip || null; V.bg = col.bg || D.col && D.col.bg || 'grad'; V.t = 1;
     document.body.style.background = V.bg === 'grad' ? 'linear-gradient(#f3f6f8,#c9d7e2)' : V.bg;
-    V._camM = null; V.set(panels3D('bag', o.I, { t: o.t || 0.3 }));
-    const sz = bagSpec(o.I); $('#info').textContent = ''; const b = document.createElement('b'); b.textContent = (OPTS.length > 1 ? o.label + ' — ' : 'المقاس: '); $('#info').append(b, document.createTextNode(sz)); $('#info').hidden = !sz;
+    V.flute = o.model ? (o.flute || null) : undefined; V._camM = null; V.set(o.model ? o.model : panels3D('bag', o.I, { t: o.t || 0.3 }));   // a box comes with its folded model
+    const sz = o.model ? (o.spec || '') : bagSpec(o.I);
+    if (o.model) { const h = $('#hint'); if (h) h.textContent = 'اسحب بصباعك عشان تلف العلبة — وبصباعين للتكبير'; document.title = 'مصنع أضواء المستقبل للتصنيع — شكل العلبة 3D'; const sm = document.querySelector('header small'); if (sm) sm.textContent = sm.textContent.replace('الكيس', 'العلبة'); } $('#info').textContent = ''; const b = document.createElement('b'); b.textContent = (OPTS.length > 1 ? o.label + ' — ' : 'المقاس: '); $('#info').append(b, document.createTextNode(sz)); $('#info').hidden = !sz;
     document.querySelectorAll('#opts button').forEach((x, k) => x.setAttribute('aria-pressed', k === i ? 'true' : 'false'));
     // what the bag has: small icons with a word under each
     { const fb = $('#feats'); fb.textContent = ''; const F = o.feats || D.feats || []; fb.hidden = !F.length;
@@ -4597,7 +4618,7 @@ function Viewer3D(canvas) {
         const cap = document.createElement('figcaption'); cap.textContent = f.t; fig.append(c, cap); fb.append(fig); }); }
     // prices (only when the factory chose to show them)
     const pr = $('#prices'); pr.textContent = ''; pr.hidden = !(D.showPrices && o.prices && o.prices.length);
-    if (!pr.hidden) { const t = document.createElement('table'), h = t.insertRow(); ['الكمية', 'سعر الكيس', 'الإجمالي'].forEach(x => { const th = document.createElement('th'); th.textContent = x; h.append(th); });
+    if (!pr.hidden) { const t = document.createElement('table'), h = t.insertRow(); ['الكمية', o.model ? 'سعر العلبة' : 'سعر الكيس', 'الإجمالي'].forEach(x => { const th = document.createElement('th'); th.textContent = x; h.append(th); });
       o.prices.forEach(p => { const r = t.insertRow(); [fmt(p.qty, 0), fmt(p.unit, 3), fmt(p.total, 2)].forEach(x => r.insertCell().textContent = x); });
       const die = o.prices.find(p => p.die > 0); const n = document.createElement('div'); n.className = 'pnote'; n.textContent = 'الأسعار بالريال' + (vat ? ' من غير الضريبة (' + Math.round(vat * 100) + '%)' : '') + (die ? ' — قالب التكسير ' + fmt(die.die, 2) + ' ريال مرة واحدة' : '') + '.';
       const tg = document.createElement('button'); tg.type = 'button'; tg.className = 'ptg'; const body = document.createElement('div'); body.append(t, n);
