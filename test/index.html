@@ -1664,21 +1664,24 @@ function fitPad(im, w, h, col) {
   g.drawImage(im, (cw - dw) / 2, (ch - dh) / 2, dw, dh); return C[key] = c;
 }
 // finish masks (black = foil / spot UV) put into the picture's alpha: 1 paper, 2/3 spot UV, 1/3 foil -> the shader makes it shine
-function finImg(im, fm, sm, em) {
-  if (!im || !im.width || (!fm && !sm && !em)) return im;
-  const id = o => o ? (o.__aid || (o.__aid = (_glBag.n = (_glBag.n || 0) + 1))) : 0, C = im.__finC || (im.__finC = {}), key = id(fm) + '|' + id(sm) + '|' + id(em); if (C[key]) return C[key];
-  const k = Math.min(1, 2048 / Math.max(im.width, im.height)), w = Math.max(1, Math.round(im.width * k)), h = Math.max(1, Math.round(im.height * k));
+function finImg(im, M) {   // M: { foil, foil2, spot, emb, deb } masks (black = there)
+  M = M || {}; const ks = ['foil', 'foil2', 'spot', 'emb', 'deb'];
+  if (!im || !im.width || !ks.some(k => M[k])) return im;
+  const id = o => o ? (o.__aid || (o.__aid = (_glBag.n = (_glBag.n || 0) + 1))) : 0, C = im.__finC || (im.__finC = {}), key = ks.map(k => id(M[k])).join('|'); if (C[key]) return C[key];
+  const k = Math.min(1, 2048 / Math.max(im.width, im.height)), w = Math.max(1, Math.round(im.width * k)), h = Math.max(1, Math.round(im.height * k)), N = w * h;
   const c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d'); g.drawImage(im, 0, 0, w, h); const D = g.getImageData(0, 0, w, h), px = D.data;
-  const lum = m => { if (!m) return null; const t = document.createElement('canvas'); t.width = w; t.height = h; const x = t.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, w, h); x.drawImage(m, 0, 0, w, h); return x.getImageData(0, 0, w, h).data; };
-  const F = lum(fm), S = lum(sm), E = lum(em), hc = document.createElement('canvas'); hc.width = w; hc.height = h; const hx = hc.getContext('2d'), HD = hx.createImageData(w, h), hp = HD.data;
-  for (let i = 0; i < px.length; i += 4) { const f = F ? (F[i] + F[i + 1] + F[i + 2]) / 3 : 255, sp = S ? (S[i] + S[i + 1] + S[i + 2]) / 3 : 255, eb = E ? (E[i] + E[i + 1] + E[i + 2]) / 3 : 255;
-    px[i + 3] = f < 128 ? 85 : sp < 128 ? 170 : 255; hp[i] = 255 - eb; hp[i + 1] = sp < 128 ? 255 : f < 128 ? 150 : 0; hp[i + 2] = 0; hp[i + 3] = 255; }
+  const on = m => { if (!m) return null; const t = document.createElement('canvas'); t.width = w; t.height = h; const x = t.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, w, h); x.drawImage(m, 0, 0, w, h); const q = x.getImageData(0, 0, w, h).data, o = new Float32Array(N); for (let i = 0; i < N; i++) o[i] = (q[i * 4] + q[i * 4 + 1] + q[i * 4 + 2]) / 3 < 128 ? 1 : 0; return o; };
+  const F = on(M.foil), F2 = on(M.foil2), S = on(M.spot), E = on(M.emb), Db = on(M.deb);
+  for (let i = 0; i < N; i++) px[i * 4 + 3] = (F && F[i]) || (F2 && F2[i]) ? 85 : S && S[i] ? 170 : 255;
   g.putImageData(D, 0, 0); c.__finish = true;
-  // heights for the raised look: emboss rounded off wide, spot UV / foil only a little
-  hx.putImageData(HD, 0, 0); const hb = document.createElement('canvas'); hb.width = w; hb.height = h; const bx = hb.getContext('2d'), bl = Math.max(1, w / 500);
-  bx.fillStyle = '#000'; bx.fillRect(0, 0, w, h); try { bx.filter = 'blur(' + (bl * 2.2).toFixed(1) + 'px)'; } catch (e) {} bx.globalCompositeOperation = 'lighter';
-  const one = (ch, b) => { const t = document.createElement('canvas'); t.width = w; t.height = h; const tx = t.getContext('2d'), TD = tx.createImageData(w, h), tp = TD.data; for (let i = 0; i < tp.length; i += 4) { tp[i + ch] = hp[i + ch]; tp[i + 3] = 255; } tx.putImageData(TD, 0, 0); try { bx.filter = 'blur(' + b.toFixed(1) + 'px)'; } catch (e) {} bx.drawImage(t, 0, 0); };
-  if (E) one(0, bl * 2.2); if (F || S) one(1, bl * 0.8); bx.filter = 'none'; c.__emb = hb;
+  // heights (soft edges like a real die): R = 0.5 + emboss - deboss, G = spot UV coat / foil, B = which foil colour
+  const be = Math.max(1, w / 650), Hr = new Float32Array(N), Hg = new Float32Array(N);
+  if (E) _blurCh(E, w, h, be); if (Db) _blurCh(Db, w, h, be);
+  for (let i = 0; i < N; i++) { Hr[i] = 0.5 + 0.5 * ((E ? E[i] : 0) - (Db ? Db[i] : 0)); Hg[i] = S && S[i] ? 1 : (F && F[i]) || (F2 && F2[i]) ? 0.35 : 0; }
+  _blurCh(Hg, w, h, Math.max(1, w / 1600));
+  const hb = document.createElement('canvas'); hb.width = w; hb.height = h; const hx = hb.getContext('2d'), HD = hx.createImageData(w, h), hp = HD.data;
+  for (let i = 0; i < N; i++) { hp[i * 4] = Hr[i] * 255; hp[i * 4 + 1] = Hg[i] * 255; hp[i * 4 + 2] = F2 && F2[i] ? 255 : 0; hp[i * 4 + 3] = 255; }
+  hx.putImageData(HD, 0, 0); c.__emb = hb;
   return C[key] = c;
 }
 function panels3D(style, I, R) {
@@ -2550,10 +2553,17 @@ async function pdfInspect(bytes, opt){
 // (vector shapes only; text and pictures in a spot colour are counted and reported, not drawn)
 const SPOT_KIND = [
   ['die', /(cut|die\b|dieline|crease|contour|perf|thru|stanz|kiss|دايكت|تكسير|\bقص)/i],
-  ['foil', /(foil|gold|silver|metal|bronze|copper|stamp|hot\s*foil|تذهيب|فويل|ذهب|فضي|فضه)/i],
+  ['foil2', /(silver|silber|argent|chrome|فضي|فضه|فضة)/i],
+  ['foil', /(foil|gold|metal|bronze|copper|stamp|hot\s*foil|تذهيب|فويل|ذهب)/i],
   ['spot', /(spot\s*uv|\buv\b|varnish|gloss|vernis|\black\b|سبوت|يوفي|ورنيش)/i],
-  ['emb', /(emboss|deboss|blind|كفراج|بارز|غائر)/i]];
-const spotKind = n => { for (const [k, re] of SPOT_KIND) if (re.test(n)) return k; return null; };
+  ['deb', /(deboss|غائر|غاير)/i],
+  ['emb', /(emboss|blind|كفراج|بارز)/i]];
+const FIN_KINDS = ['foil', 'foil2', 'spot', 'emb', 'deb'];
+const spotKindAuto = n => { for (const [k, re] of SPOT_KIND) if (re.test(n)) return k; return null; };
+// what each plate does, chosen by the user (kept by plate name, like a finishing profile): 'ink' = a printing colour, 'none' = leave it out
+const spotMap = () => { if (!spotMap.m) { try { spotMap.m = JSON.parse(localStorage.getItem('adwaaSpotMap') || '{}') || {}; } catch (e) { spotMap.m = {}; } } return spotMap.m; };
+const spotMapSet = (n, k) => { const m = spotMap(); if (!k || k === 'auto') delete m[n]; else m[n] = k; try { localStorage.setItem('adwaaSpotMap', JSON.stringify(m)); } catch (e) {} };
+const spotKind = n => { const o = spotMap()[n]; if (o) return o === 'ink' ? null : o; return spotKindAuto(n); };
 async function pdfSpotMasks(bytes, pageNo, maxPx) {
   pageNo = pageNo || 1; maxPx = maxPx || 2000;
   const N = bytes.length, lat = u8 => { let t = ''; for (let i = 0; i < u8.length; i += 0x8000) t += String.fromCharCode.apply(null, u8.subarray(i, Math.min(u8.length, i + 0x8000))); return t; };
@@ -2602,7 +2612,7 @@ async function pdfSpotMasks(bytes, pageNo, maxPx) {
   const run = async (txt, res, ctm0, depth) => {
     if (depth > 12) return; const T = txt.match(/<<|>>|\[|\]|\/[^\s\/\[\]<>(){}%]*|\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]*>|[+-]?\d*\.?\d+(?:[eE][+-]?\d+)?|[A-Za-z'"*]+|%[^\r\n]*/g) || [];
     const stack = []; let ctm = ctm0, gs = []; let fillCS = null, strokeCS = null, fillT = [], strokeT = [], lw = 1, path = new Path2D(), inText = false;
-    const paint = (fill, stroke, evenodd) => { const doIt = (csn, tints, isFill) => { if (!csn) return; csn.forEach((nm, ci) => { const t = +tints[ci] || 0; if (t < 0.02) return; const k = spotKind(nm || ''); if (!k) return;
+    const paint = (fill, stroke, evenodd) => { const doIt = (csn, tints, isFill) => { if (!csn) return; csn.forEach((nm, ci) => { const t = +tints[ci] || 0; if (t < 0.02) return; const k = spotKind(nm || ''); if (!k || k === 'none') return;
         (names[k] = names[k] || new Set()).add(nm); const g = cv(k).getContext('2d'), M = mul(ctm, BASE); g.setTransform(M[0], M[1], M[2], M[3], M[4], M[5]); g.globalAlpha = Math.min(1, t); g.fillStyle = g.strokeStyle = '#000';
         if (isFill) g.fill(path, evenodd ? 'evenodd' : 'nonzero'); else { g.lineWidth = Math.max(lw, 0.5 / sc); g.stroke(path); } g.globalAlpha = 1; painted++; }); };
       if (fill) doIt(fillCS, fillT, true); if (stroke) doIt(strokeCS, strokeT, false); path = new Path2D(); };
@@ -3958,13 +3968,47 @@ var QRCode = M['index'], ECL = M['QRErrorCorrectLevel'];
 return function(text, level){ var ec = ECL[level || 'M']; for (var t = 1; t <= 40; t++) { try { var q = new QRCode(t, ec); q.addData(text); q.make(); var n = q.getModuleCount(), m = []; for (var r = 0; r < n; r++) { var row = []; for (var c = 0; c < n; c++) row.push(q.isDark(r, c)); m.push(row); } return m; } catch (e) {} } return null; };
 })();
 /* ---- paper bag in WebGL: real depth, light, one texture atlas for all pictures, round handles, soft shadow ---- */
+function _blurCh(A, w, h, r) {   // box blur one channel in place, twice each way (close to a gaussian)
+  r = Math.round(r); if (r < 1) return A; const T = new Float32Array(Math.max(w, h));
+  for (let pass = 0; pass < 2; pass++) {
+    for (let y = 0; y < h; y++) { const o = y * w; let acc = 0; for (let x = -r; x <= r; x++) acc += A[o + Math.min(w - 1, Math.max(0, x))];
+      for (let x = 0; x < w; x++) { T[x] = acc / (2 * r + 1); acc += A[o + Math.min(w - 1, x + r + 1)] - A[o + Math.max(0, x - r)]; } for (let x = 0; x < w; x++) A[o + x] = T[x]; }
+    for (let x = 0; x < w; x++) { let acc = 0; for (let y = -r; y <= r; y++) acc += A[Math.min(h - 1, Math.max(0, y)) * w + x];
+      for (let y = 0; y < h; y++) { T[y] = acc / (2 * r + 1); acc += A[Math.min(h - 1, y + r + 1) * w + x] - A[Math.max(0, y - r) * w + x]; } for (let y = 0; y < h; y++) A[y * w + x] = T[y]; } }
+  return A;
+}
+// the studio the bag stands in (drawn here, no outside picture): soft boxes, a window, a light floor — every glossy finish reflects it
+function _envMap() {
+  if (_envMap.c) return _envMap.c;
+  const W = 512, H = 256, c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d');
+  const gr = g.createLinearGradient(0, 0, 0, H); gr.addColorStop(0, '#7a7e85'); gr.addColorStop(0.18, '#4a4d52'); gr.addColorStop(0.42, '#393b3f'); gr.addColorStop(0.5, '#2c2d30'); gr.addColorStop(0.62, '#333436'); gr.addColorStop(1, '#232425'); g.fillStyle = gr; g.fillRect(0, 0, W, H);
+  const glow = (x, y, r, a) => { const q = g.createRadialGradient(x, y, 0, x, y, r); q.addColorStop(0, 'rgba(255,255,255,' + a + ')'); q.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = q; g.fillRect(x - r, y - r, 2 * r, 2 * r); };
+  const box = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(W * x, H * y, W * w, H * h); };
+  glow(W * 0.42, H * 0.15, 100, 0.3); box(0.36, 0.06, 0.12, 0.14, '#ffffff');                  // big soft box above, behind the viewer
+  glow(W * 0.66, H * 0.42, 90, 0.25); [0, 1, 2].forEach(i => [0, 1].forEach(j => box(0.575 + i * 0.05, 0.28 + j * 0.13, 0.044, 0.115, '#eef3fb')));   // window on the right
+  box(0.215, 0.26, 0.018, 0.36, '#f6f6f6'); glow(W * 0.224, H * 0.44, 40, 0.25);                // strip light on the left
+  box(0.86, 0.3, 0.05, 0.2, '#bfc3c8'); box(0.06, 0.32, 0.04, 0.16, '#a9adb2');                  // dimmer lights round the back
+  const fl = g.createLinearGradient(0, H * 0.55, 0, H); fl.addColorStop(0, 'rgba(255,255,255,0.1)'); fl.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = fl; g.fillRect(0, H * 0.55, W, H * 0.45);
+  const D = g.getImageData(0, 0, W, H).data, out = document.createElement('canvas'); out.width = W; out.height = H * 3; const og = out.getContext('2d');
+  [0, 7, 26].forEach((r, lv) => { const ch = [0, 1, 2].map(k => { const A = new Float32Array(W * H); for (let i = 0; i < W * H; i++) A[i] = D[i * 4 + k]; return _blurCh(A, W, H, r); });
+    const I = og.createImageData(W, H); for (let i = 0; i < W * H; i++) { I.data[i * 4] = ch[0][i]; I.data[i * 4 + 1] = ch[1][i]; I.data[i * 4 + 2] = ch[2][i]; I.data[i * 4 + 3] = 255; } og.putImageData(I, 0, H * lv); });
+  return _envMap.c = out;
+}
 function _glBagProg(G) {
   if (G.bag) return G.bag;
   const gl = G.gl, sh = (t, s) => { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); if (!gl.getShaderParameter(o, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(o)); return o; };
+  const der = !!gl.getExtension('OES_standard_derivatives');
   const vs = 'attribute vec3 aP;attribute vec3 aN;attribute vec3 aCO;attribute vec3 aCI;attribute vec4 aUV;attribute vec4 aF;attribute float aA;' +
     'uniform vec4 uC;varying vec3 vN;varying vec3 vCO;varying vec3 vCI;varying vec4 vUV;varying vec4 vF;varying float vA;varying vec3 vP;' +
     'void main(){float w=uC.w-aP.z;gl_Position=vec4(2.0*aP.x*uC.x/uC.y,2.0*aP.y*uC.x/uC.z,(-aP.z/uC.w)*0.95*w,w);vP=aP;vN=aN;vCO=aCO;vCI=aCI;vUV=aUV;vF=aF;vA=aA;}';
-  const fs = 'precision mediump float;varying vec3 vN;varying vec3 vCO;varying vec3 vCI;varying vec4 vUV;varying vec4 vF;varying float vA;varying vec3 vP;uniform sampler2D uT;uniform sampler2D uE;uniform float uTs;uniform float uEye;uniform float uFlip;uniform float uGl;uniform vec3 uFoil;' +
+  const fs = (der ? '#extension GL_OES_standard_derivatives : enable\n#define DER 1\n' : '') +
+    'precision mediump float;varying vec3 vN;varying vec3 vCO;varying vec3 vCI;varying vec4 vUV;varying vec4 vF;varying float vA;varying vec3 vP;' +
+    'uniform sampler2D uT;uniform sampler2D uE;uniform sampler2D uEnv;uniform float uTs;uniform float uEye;uniform float uFlip;uniform float uGl;uniform vec3 uFoil;uniform vec3 uFoil2;uniform float uFoilR;uniform float uEmb;' +
+    // the studio, at three softness levels (0 sharp .. 2 very soft), brightened so lights read as lights
+    'vec3 envS(vec3 R,float lv){float u=atan(R.x,R.z)*0.15915+0.5;float v=clamp(acos(clamp(R.y,-1.0,1.0))*0.31831,0.01,0.99);float l0=min(floor(lv),1.0);float t=clamp(lv-l0,0.0,1.0);' +
+    ' vec3 a=texture2D(uEnv,vec2(u,(l0+v)/3.0)).rgb;vec3 b=texture2D(uEnv,vec2(u,(l0+1.0+v)/3.0)).rgb;vec3 e=mix(a,b,t);return e*e*1.7+e*0.22;}' +
+    'float hsh(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}' +
+    'float vn(vec2 p){vec2 i=floor(p);vec2 f=fract(p);f=f*f*(3.0-2.0*f);return mix(mix(hsh(i),hsh(i+vec2(1.0,0.0)),f.x),mix(hsh(i+vec2(0.0,1.0)),hsh(i+vec2(1.0,1.0)),f.x),f.y);}' +
     'void main(){' +
     ' if(vF.z>8.5){float r=length(vUV.xy*2.0-1.0);float a=(1.0-smoothstep(0.35,1.0,r))*0.38;gl_FragColor=vec4(0.0,0.0,0.0,a);return;}' +
     ' bool fr=(uFlip>0.5)?!gl_FrontFacing:gl_FrontFacing;' +
@@ -3973,20 +4017,24 @@ function _glBagProg(G) {
     ' vec3 n=normalize(vN);if(!fr)n=-n;if(vF.z>0.5)n=normalize(vN);' +
     ' vec3 L=normalize(vec3(0.35,0.8,0.55));float d=max(dot(n,L),0.0);float amb=0.5;' +
     ' float sp=0.0;float ex=18.0;' +
-    ' if(vF.z<0.5){sp=uGl*0.32;ex=mix(6.0,26.0,uGl);' +
-    // finishes: R = emboss height, G = spot UV / foil height (both softened) -> a raised edge lit from the top left
-    '  vec3 V=normalize(vec3(0.0,0.0,uEye)-vP);float bev=0.0;' +
-    '  if(has>0.5){vec2 e=vec2(uTs,0.0);vec4 h1=texture2D(uE,uv+e.xy),h2=texture2D(uE,uv-e.xy),h3=texture2D(uE,uv+e.yx),h4=texture2D(uE,uv-e.yx);bev=dot(vec2(h2.r-h1.r,h4.r-h3.r)*2.6+vec2(h2.g-h1.g,h4.g-h3.g)*1.1,vec2(0.6,0.8));}' +
-    '  vec3 H=normalize(L+V);' +
-    '  if(fa<0.5){vec3 R=reflect(-V,n);' +   // hot foil: a mirror of a soft studio, so it sweeps light and dark as the bag turns
-    '   float env=0.52+0.22*max(R.y,0.0)+0.85*exp(-pow((R.y-0.22)*4.5,2.0))+0.35*exp(-pow((R.x+0.35)*3.2,2.0))*max(R.z,0.0)-0.12*exp(-pow((R.y+0.15)*5.0,2.0));' +
-    '   float gr=fract(sin(dot(floor(uv*1800.0),vec2(12.9898,78.233)))*43758.5453);env*=0.94+0.12*gr;' +
-    '   float s2=pow(max(dot(n,H),0.0),90.0)*1.5;' +
-    '   gl_FragColor=vec4(uFoil*env*1.05+vec3(s2)+vec3(bev*0.55),1.0);return;}' +
-    '  else if(fa<0.85){vec3 R=reflect(-V,n);' +   // spot UV: thick clear gloss, a sharp moving highlight and a raised edge
-    '   float s2=pow(max(dot(n,H),0.0),140.0)*1.7+0.38*exp(-pow((R.y-0.25)*6.0,2.0))*max(R.z,0.0);' +
-    '   gl_FragColor=vec4((c*1.05+0.015)*(amb+0.55*d)*(1.0+bev*1.4)+vec3(s2),1.0);return;}' +
-    '  c*=1.0+bev*1.3;}' +
+    ' if(vF.z<0.5){' +
+    '  float d0=d;vec3 V=normalize(vec3(0.0,0.0,uEye)-vP);vec4 hs=vec4(0.5,0.0,0.0,0.0);if(has>0.5)hs=texture2D(uE,uv);' +
+    // height in mm: emboss up / deboss down (R round 0.5), spot UV a thin raised coat, foil a hair (G)
+    '  float hg=(hs.r-0.5)*2.0*uEmb+hs.g*0.05;' +
+    '\n#ifdef DER\n' +
+    '  if(has>0.5&&fr){vec3 dpx=dFdx(vP);vec3 dpy=dFdy(vP);float hx=dFdx(hg);float hy=dFdy(hg);vec3 r1=cross(dpy,n);vec3 r2=cross(n,dpx);float det=dot(dpx,r1);if(abs(det)>0.000001){vec3 gq=sign(det)*(hx*r1+hy*r2);n=normalize(abs(det)*n-gq);}}' +
+    '\n#else\n' +
+    '  if(has>0.5){vec2 e=vec2(uTs,0.0);float b1=texture2D(uE,uv-e.xy).r-texture2D(uE,uv+e.xy).r;float b2=texture2D(uE,uv-e.yx).r-texture2D(uE,uv+e.yx).r;c*=1.0+dot(vec2(b1,b2),vec2(0.6,0.8))*2.5*uEmb;}' +
+    '\n#endif\n' +
+    '  d=max(dot(n,L),0.0);float nv=max(dot(n,V),0.0);float fz=pow(1.0-nv,5.0);vec3 base=c*(amb+0.55*d+(d-d0)*0.9);' +
+    '  if(fa<0.5){vec3 R=reflect(-V,n);vec3 e=envS(R,uFoilR);vec3 fc=hs.b>0.5?uFoil2:uFoil;' +   // foil = metal: the studio in the foil colour
+    '   float gr=0.95+0.1*hsh(floor(uv*2400.0));vec3 m=fc*(0.62+e*1.45)*mix(1.0,gr,step(0.5,uFoilR))+fc*pow(max(dot(n,normalize(L+V)),0.0),36.0)*0.9;' +
+    '   gl_FragColor=vec4(mix(m,e,fz*0.35),1.0);return;}' +
+    '  vec2 pn=has>0.5?uv*900.0:vec2(0.0);vec3 wob=vec3(vn(pn)-0.5,vn(pn+31.7)-0.5,0.0);' +   // the slight waviness of a laminated / varnished sheet
+    '  if(fa<0.85){vec3 R=reflect(-V,normalize(n+wob*0.02));vec3 e=envS(R,0.12);' +   // spot UV: thick clear gloss
+    '   gl_FragColor=vec4(base*1.02+e*(0.075+fz*0.8),1.0);return;}' +
+    '  vec3 R=reflect(-V,normalize(n+wob*0.035*uGl));float lv=mix(2.0,0.55,uGl);vec3 e=envS(R,lv);' +   // the sheet itself: matte = soft sheen, gloss = the studio in it
+    '  gl_FragColor=vec4(base+e*(mix(0.006,0.04,uGl)+fz*mix(0.05,0.6,uGl)),1.0);return;}' +
     ' if(vF.z>0.5&&vF.z<1.5){c*=0.78+0.32*(0.5+0.5*sin(vF.w*0.9+vA*2.0));sp=0.15;}' +
     ' else if(vF.z>1.5&&vF.z<2.5){c*=0.72+0.36*(0.5+0.5*sin(vF.w*0.55+vA*2.0));}' +
     ' else if(vF.z>2.5&&vF.z<3.5){float b=abs(sin(vF.w*0.7+vA*2.0))*abs(sin(vF.w*0.7-vA*2.0));c*=0.7+0.45*b;sp=0.1;}' +
@@ -3998,7 +4046,9 @@ function _glBagProg(G) {
   const pr = gl.createProgram(); gl.attachShader(pr, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(pr);
   if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) throw new Error('bag link');
   const loc = n => gl.getAttribLocation(pr, n);
-  G.bag = { pr, a: { aP: loc('aP'), aN: loc('aN'), aCO: loc('aCO'), aCI: loc('aCI'), aUV: loc('aUV'), aF: loc('aF'), aA: loc('aA') }, uC: gl.getUniformLocation(pr, 'uC'), uT: gl.getUniformLocation(pr, 'uT'), uFlip: gl.getUniformLocation(pr, 'uFlip'), uGl: gl.getUniformLocation(pr, 'uGl'), uFoil: gl.getUniformLocation(pr, 'uFoil'), uE: gl.getUniformLocation(pr, 'uE'), uTs: gl.getUniformLocation(pr, 'uTs'), uEye: gl.getUniformLocation(pr, 'uEye'), buf: gl.createBuffer(), tex: gl.createTexture(), texE: gl.createTexture(), atlasKey: null, slots: new Map() };
+  G.bag = { pr, a: { aP: loc('aP'), aN: loc('aN'), aCO: loc('aCO'), aCI: loc('aCI'), aUV: loc('aUV'), aF: loc('aF'), aA: loc('aA') }, uC: gl.getUniformLocation(pr, 'uC'), uT: gl.getUniformLocation(pr, 'uT'), uFlip: gl.getUniformLocation(pr, 'uFlip'), uGl: gl.getUniformLocation(pr, 'uGl'), uFoil: gl.getUniformLocation(pr, 'uFoil'), uE: gl.getUniformLocation(pr, 'uE'), uTs: gl.getUniformLocation(pr, 'uTs'), uEye: gl.getUniformLocation(pr, 'uEye'), uEnv: gl.getUniformLocation(pr, 'uEnv'), uFoil2: gl.getUniformLocation(pr, 'uFoil2'), uFoilR: gl.getUniformLocation(pr, 'uFoilR'), uEmb: gl.getUniformLocation(pr, 'uEmb'), buf: gl.createBuffer(), tex: gl.createTexture(), texE: gl.createTexture(), texEnv: gl.createTexture(), atlasKey: null, slots: new Map() };
+  { const B = G.bag, ev = _envMap(); gl.bindTexture(gl.TEXTURE_2D, B.texEnv); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, ev);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR); }
   return G.bag;
 }
 function _glBag(V, Q, view, rot, cam, ctx) {
@@ -4013,7 +4063,7 @@ function _glBag(V, Q, view, rot, cam, ctx) {
     B.atlasKey = key; B.slots = new Map();
     const S = Math.min(2048, gl.getParameter(gl.MAX_TEXTURE_SIZE) || 2048), n = Math.max(1, imgs.length), cols = Math.ceil(Math.sqrt(n)), ss = Math.floor(S / cols), pad = 4;
     const ac = document.createElement('canvas'); ac.width = ac.height = S; const ax = ac.getContext('2d'); ax.fillStyle = '#fff'; ax.fillRect(0, 0, S, S);
-    const ae = document.createElement('canvas'); ae.width = ae.height = S; const ex2 = ae.getContext('2d'); ex2.fillStyle = '#000'; ex2.fillRect(0, 0, S, S); B.texSz = S;
+    const ae = document.createElement('canvas'); ae.width = ae.height = S; const ex2 = ae.getContext('2d'); ex2.fillStyle = 'rgb(128,0,0)'; ex2.fillRect(0, 0, S, S); B.texSz = S;
     imgs.forEach((im, i) => { const cx = (i % cols) * ss, cy = Math.floor(i / cols) * ss; if (im.__emb) try { ex2.drawImage(im.__emb, cx, cy, ss, ss); } catch (e) {}
       try { if (im.__finish) { const tc = document.createElement('canvas'); tc.width = tc.height = ss; tc.getContext('2d').drawImage(im, 0, 0, ss, ss); ax.putImageData(tc.getContext('2d').getImageData(0, 0, ss, ss), cx, cy); } else ax.drawImage(im, cx, cy, ss, ss); } catch (e) {} B.slots.set(im, { x: (cx + pad) / S, y: (cy + pad) / S, w: (ss - 2 * pad) / S, h: (ss - 2 * pad) / S }); });
     gl.bindTexture(gl.TEXTURE_2D, B.tex); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
@@ -4074,8 +4124,9 @@ function _glBag(V, Q, view, rot, cam, ctx) {
   if (cv.width !== PW || cv.height !== PH) { cv.width = PW; cv.height = PH; }
   gl.viewport(0, 0, PW, PH); gl.clearColor(0, 0, 0, 0); gl.clearDepth(1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   gl.useProgram(B.pr); gl.uniform4f(B.uC, K, W, H, dist); gl.uniform1i(B.uT, 0); gl.uniform1f(B.uFlip, V.glFlip === false ? 0 : 1);
-  { const A = V.art || {}, g = A.gloss === 'gloss' ? 1 : A.gloss === 'matte' ? 0 : ((V.autoGloss || A.glossAuto) ? 1 : 0.35), fc = _hexRGB(A.foilCol || '#d4af37'); gl.uniform1f(B.uGl, g); gl.uniform3f(B.uFoil, fc[0], fc[1], fc[2]); }
-  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, B.texE); gl.uniform1i(B.uE, 1); gl.uniform1f(B.uTs, 1.5 / (B.texSz || 2048)); gl.uniform1f(B.uEye, dist);
+  { const A = V.art || {}, g = A.gloss === 'gloss' ? 1 : A.gloss === 'matte' ? 0 : ((V.autoGloss || A.glossAuto) ? 1 : 0.35), fc = _hexRGB(A.foilCol || '#c9a961'), f2 = _hexRGB(A.foilCol2 || '#c9ccd3'); gl.uniform1f(B.uGl, g); gl.uniform3f(B.uFoil, fc[0], fc[1], fc[2]); gl.uniform3f(B.uFoil2, f2[0], f2[1], f2[2]);
+    gl.uniform1f(B.uFoilR, A.foilType === 'cold' ? 0.25 : 0.6); gl.uniform1f(B.uEmb, +A.embH || 0.7); }
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, B.texE); gl.uniform1i(B.uE, 1); gl.uniform1f(B.uTs, 1.5 / (B.texSz || 2048)); gl.uniform1f(B.uEye, dist); gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, B.texEnv); gl.uniform1i(B.uEnv, 2);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, B.tex);
   gl.disable(gl.CULL_FACE); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
   const run = arr => { if (!arr.length) return; gl.bindBuffer(gl.ARRAY_BUFFER, B.buf); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(arr), gl.STREAM_DRAW);
@@ -4175,8 +4226,9 @@ function Viewer3D(canvas) {
         const pw = p.x1 - p.x0, ph = p.y1 - p.y0, own = (x, z) => [(x - p.x0) / pw, (z - p.y0) / ph], full = (x, z) => [x / Bw, z / Bh];
         let iO = null, uO = null, iI = null, uI = null;
         if (isBag) {
-          const pm = x => x && fitPad(x, m.bag.L, m.bag.D, '#ffffff'), fF = art.front && finImg(fitPad(art.front, m.bag.L, m.bag.D), pm(art.foilF), pm(art.spotF), pm(art.embF)), fB = art.back && finImg(fitPad(art.back, m.bag.L, m.bag.D), pm(art.foilB), pm(art.spotB), pm(art.embB));
-          const fA = art.flat && finImg(art.flat, art.foilA, art.spotA, art.embA);
+          const pm = x => x && fitPad(x, m.bag.L, m.bag.D, '#ffffff'), fm = (sf, f) => ({ foil: f(art['foil' + sf]), foil2: f(art['foil2' + sf]), spot: f(art['spot' + sf]), emb: f(art['emb' + sf]), deb: f(art['deb' + sf]) }), id = x => x;
+          const fF = art.front && finImg(fitPad(art.front, m.bag.L, m.bag.D), fm('F', pm)), fB = art.back && finImg(fitPad(art.back, m.bag.L, m.bag.D), fm('B', pm));
+          const fA = art.flat && finImg(art.flat, fm('A', id));
           if (art.mode === 'flat') {
             if (art.flatHalf && art.flat) {   // half-die file (glue | front | gusset): first half, and the same (or the second file) on back + gusset
               const Hw = m.bag.Hw, sh = m.bag.L + m.bag.W, second = p.x0 >= m.bag.px[2] - 0.5;
