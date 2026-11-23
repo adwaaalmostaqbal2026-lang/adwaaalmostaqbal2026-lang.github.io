@@ -4031,8 +4031,12 @@ function _glBagProg(G) {
     '   float gr=0.95+0.1*hsh(floor(uv*2400.0));vec3 m=fc*(0.62+e*1.45)*mix(1.0,gr,step(0.5,uFoilR))+fc*pow(max(dot(n,normalize(L+V)),0.0),36.0)*0.9;' +
     '   gl_FragColor=vec4(mix(m,e,fz*0.35),1.0);return;}' +
     '  vec2 pn=has>0.5?uv*900.0:vec2(0.0);vec3 wob=vec3(vn(pn)-0.5,vn(pn+31.7)-0.5,0.0);' +   // the slight waviness of a laminated / varnished sheet
-    '  if(fa<0.85){vec3 R=reflect(-V,normalize(n+wob*0.02));vec3 e=envS(R,0.12);' +   // spot UV: thick clear gloss
-    '   gl_FragColor=vec4(base*1.02+e*(0.075+fz*0.8),1.0);return;}' +
+    '  float lu=dot(base,vec3(0.3,0.59,0.11));' +
+    '  if(fa<0.85){vec3 nq=normalize(n+wob*0.02);vec3 R=reflect(-V,nq);vec3 e=envS(R,0.04);' +   // spot UV: thick clear gloss — the colour under it deep and rich, and it flashes white when it catches a light
+    '   float st=0.7+0.6*vn(vec2(uv.x*2600.0,uv.y*260.0));float g2=pow(max(dot(nq,normalize(L+V)),0.0),220.0)*1.6;' +
+    '   vec3 deep=max(mix(vec3(lu),base,1.18)*0.93,0.0);' +
+    '   vec3 hi=max(e-vec3(0.14),0.0);gl_FragColor=vec4(deep+e*(0.04+fz*0.5)+(hi*0.5+vec3(g2))*st,1.0);return;}' +
+    '  base=mix(base,mix(vec3(lu),base,0.75)*0.88+0.09,(1.0-uGl)*0.95);' +   // matte lamination: a faint grey veil over the print
     '  vec3 R=reflect(-V,normalize(n+wob*0.035*uGl));float lv=mix(2.0,0.55,uGl);vec3 e=envS(R,lv);' +   // the sheet itself: matte = soft sheen, gloss = the studio in it
     '  gl_FragColor=vec4(base+e*(mix(0.006,0.04,uGl)+fz*mix(0.05,0.6,uGl)),1.0);return;}' +
     ' if(vF.z>0.5&&vF.z<1.5){c*=0.78+0.32*(0.5+0.5*sin(vF.w*0.9+vA*2.0));sp=0.15;}' +
