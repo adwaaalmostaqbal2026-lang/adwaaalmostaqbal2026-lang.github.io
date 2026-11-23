@@ -427,8 +427,8 @@ async function libBin(n) {
 }
 function libLoad() {
   if (LIBDATA) return Promise.resolve(LIBDATA);
-  if (!LIBLOADING) LIBLOADING = libBin('g').then(d => { d.forEach(D => { if (D.l === 'F' && D.c === '0427') D.factory = true; });   // 0427 = the factory's own die (Project5)
-    LIBEV3D = {}; LIBDT = null; LIBDATA = d; return d; }).catch(e => { LIBLOADING = null; throw e; });
+  if (!LIBLOADING) LIBLOADING = Promise.all([libBin('g'), libBin('e').catch(() => ({}))]).then(([d, e3]) => { d.forEach(D => { if (D.l === 'F' && D.c === '0427') D.factory = true; });   // 0427 = the factory's own die (Project5)
+    LIBEV3D = e3 || {}; LIBDT = null; LIBDATA = d; return d; }).catch(e => { LIBLOADING = null; throw e; });
   return LIBLOADING;
 }
 // EngView parametric expressions: tiny parser/evaluator for the library's parameter formulas
@@ -2240,6 +2240,7 @@ function simplify(pts, tol) {
   return pts.filter((_, i) => keep[i]);
 }
 // world matrix of every face at fold amount t (folds go to -y like the rectangular styles)
+function _keyAng(K, t) { let a = 0; for (const [s0, s1, to] of K) { if (t <= s0) break; a = a + (to - a) * _ease((t - s0) / Math.max(1e-6, s1 - s0)); if (t < s1) break; a = to; } return a; }   // angle along a panel's own list of moves
 function faceMatrices(faces, t) {
   const by = {}; faces.forEach(f => by[f.id] = f);
   const out = {};
@@ -2248,7 +2249,7 @@ function faceMatrices(faces, t) {
     if (f.parent < 0 || !by[f.parent]) return (out[f.id] = M4.id());
     const Mp = get(by[f.parent]);
     const [[ax, ay], [bx, bz]] = f.axis, dx = bx - ax, dz = bz - ay, n = Math.hypot(dx, dz) || 1, ux = dx / n, uz = dz / n;
-    const a = (f.ang * Math.PI / 180) * _ease((t - f.s0) / Math.max(1e-6, f.s1 - f.s0));
+    const a = (f.keys ? _keyAng(f.keys, t) : f.ang * _ease((t - f.s0) / Math.max(1e-6, f.s1 - f.s0))) * Math.PI / 180;
     const fp = f.rawPoly || f.poly; let cx = 0, cz = 0; fp.forEach(([x, y]) => { cx += x; cz += y; }); cx /= fp.length; cz /= fp.length;
     let Rm = M4.mul(M4.tr(ax, 0, ay), M4.mul(M4.rotAxis(ux, 0, uz, a), M4.tr(-ax, 0, -ay)));
     if (M4.ap(M4.mul(M4.tr(ax, 0, ay), M4.mul(M4.rotAxis(ux, 0, uz, 0.3), M4.tr(-ax, 0, -ay))), [cx, 0, cz])[1] > 0)
@@ -2283,7 +2284,7 @@ function lib3dShape(m, R, th) {
 function libFaces3D(R, th, ev) {
   const okEV = (m, s) => m && m.ev && (m.evq || 0) >= 0.95 && (m.cover || 0) >= 0.9 ? s <= 0.06 : s <= 0.03;
   let best = null;
-  if (ev && ev.g && ev.par) { try { const a = libFaces3DEV2(R, th, ev); if (a) { a.shape = lib3dShape(a, R, th); a.shapeOk = a.shape <= 0.06 || (a.evq >= 0.95 && a.mapA >= 0.97 && a.angFrac >= 0.8 && a.shape < 0.6);   /* EngView's own tree, fully mapped: trust it */ if ((a.shapeOk || typeof LIB3D_FORCE !== 'undefined') && !(typeof LIB3D_NOEV2 !== 'undefined')) return a; best = a; } } catch (e) { } }
+  if (ev && ev.g && ev.par) { try { const a = libFaces3DEV2(R, th, ev); if (a) { a.shape = lib3dShape(a, R, th); a.shapeOk = a.shape <= 0.06 || (a.evq >= 0.8 && a.mapA >= 0.97 && a.angFrac >= 0.8 && a.shape < 0.6);   /* EngView's own tree, fully mapped: trust it */ if ((a.shapeOk || typeof LIB3D_FORCE !== 'undefined') && !(typeof LIB3D_NOEV2 !== 'undefined')) return a; best = a; } } catch (e) { } }
   if (ev) { const a = libFaces3DEV(R, th, ev), sa = lib3dShape(a, R, th); if (a) { a.shape = sa; a.shapeOk = okEV(a, sa); if (a.shapeOk) return a; if (!best || sa < best.shape) best = a; } }
   const b = libFaces3DCore(R, th, null); if (b) { b.shape = lib3dShape(b, R, th); b.shapeOk = b.shape <= 0.03; }
   if (!best || (b && (b.shapeOk || b.shape < best.shape))) best = b;
@@ -2307,7 +2308,7 @@ function libFaces3DEV2(R, th, ev) {
   const faces = m.faces, nP = ev.g.length;
   const pip = (x, y, P) => { let c = false; for (let i = 0, j = P.length - 1; i < P.length; j = i++) { const a = P[i], b = P[j]; if ((a[1] > y) !== (b[1] > y) && x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]) c = !c; } return c; };
   const areaOf = P => { let s = 0; for (let i = 0; i < P.length; i++) { const a = P[i], b = P[(i + 1) % P.length]; s += a[0] * b[1] - b[0] * a[1]; } return Math.abs(s) / 2; };
-  const pA = ev.g.map(g => g.length > 2 ? areaOf(g) : 0);
+  const pA = ev.g.map((g, j) => g.length > 2 ? areaOf(g) : Math.max(1e-6, (ev.p[j][2] - ev.p[j][0]) * (ev.p[j][3] - ev.p[j][1])));   // EngView panel outline, or its box
   // a point inside the face (centroid if inside, else the middle of the longest inner chord)
   const inner = f => { const P = f.poly; let cx = 0, cy = 0; P.forEach(p => { cx += p[0]; cy += p[1]; }); cx /= P.length; cy /= P.length;
     if (pip(cx, cy, P)) return [cx, cy];
@@ -2315,11 +2316,15 @@ function libFaces3DEV2(R, th, ev) {
       for (let i = 0, j = P.length - 1; i < P.length; j = i++) { const a = P[i], b = P[j]; if ((a[1] > y) !== (b[1] > y)) xs.push((b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]); }
       xs.sort((a, b) => a - b); for (let i = 0; i + 1 < xs.length; i += 2) { const w = xs[i + 1] - xs[i]; if (!best || w > best.w) best = { w, x: (xs[i] + xs[i + 1]) / 2, y }; } }
     return best ? [best.x, best.y] : [cx, cy]; };
-  const pan = faces.map(f => { const [x, y] = inner(f); let best = -1, bA = 1e18;
-    ev.g.forEach((g, j) => { if (g.length > 2 ? pip(x, y, g) : (x >= ev.p[j][0] - 1 && x <= ev.p[j][2] + 1 && y >= ev.p[j][1] - 1 && y <= ev.p[j][3] + 1)) { if (pA[j] < bA) { bA = pA[j] || 1e17; best = j; } } });
+  // EngView panel of each traced face: inside its outline; with only the panel's box, the box that matches the face's own box best
+  const iou = (a, b) => { const w = Math.min(a[2], b[2]) - Math.max(a[0], b[0]), h = Math.min(a[3], b[3]) - Math.max(a[1], b[1]); if (w <= 0 || h <= 0) return 0; const I = w * h; return I / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - I); };
+  const pan = faces.map(f => { const [x, y] = inner(f); let best = -1, bA = 1e18, bI = -1;
+    const fb = [Math.min(...f.poly.map(q => q[0])), Math.min(...f.poly.map(q => q[1])), Math.max(...f.poly.map(q => q[0])), Math.max(...f.poly.map(q => q[1]))];
+    ev.g.forEach((g, j) => { if (g.length > 2) { if (pip(x, y, g) && pA[j] < bA) { bA = pA[j] || 1e17; best = j; } return; }
+      if (x >= ev.p[j][0] - 1 && x <= ev.p[j][2] + 1 && y >= ev.p[j][1] - 1 && y <= ev.p[j][3] + 1) { const q = iou(fb, ev.p[j]); if (q > bI) { bI = q; best = j; } } });
     return best; });
   const lead = {}; faces.forEach((f, i) => { const p = pan[i]; if (p < 0) return; if (lead[p] == null || f.area > faces[lead[p]].area) lead[p] = i; });
-  const stepOf = {}, angOf = {}; ev.s.forEach((st, k) => st.forEach(([pi, a]) => { stepOf[pi] = k; angOf[pi] = a; }));
+  const stepOf = {}, angOf = {}, keysOf = {}; ev.s.forEach((st, k) => st.forEach(([pi, a]) => { stepOf[pi] = k; angOf[pi] = a; (keysOf[pi] = keysOf[pi] || []).push([k, a]); }));
   const N2 = Math.max(1, ev.s.length);
   // main root: the EngView panel with no parent that carries the most
   const kidsN = {}; ev.par.forEach((q, j) => { if (q) kidsN[q[0]] = (kidsN[q[0]] || 0) + 1; });
@@ -2342,7 +2347,9 @@ function libFaces3DEV2(R, th, ev) {
       if (!up) { if (!ev.par[p] && !kidsN[p]) { f.drop = true; } f.parent = idOf(R0); f.axis = f.axis || [[0, 0], [1, 0]]; f.ang = 0; f.s0 = 0; f.s1 = 0.02; return; }   // a loose cut-out (waste) is not part of the box
       const [a, b] = [R.map(up.line[0], up.line[1]), R.map(up.line[2], up.line[3])];
       const np = idOf(lead[up.p]); f.ang = angOf[p] != null ? angOf[p] : (old[i].parent === np ? old[i].ang || 0 : 0); f.parent = np; f.axis = [a, b];
-      const k = stepOf[p] != null ? stepOf[p] : 0; f.s0 = k / N2; f.s1 = Math.min(1, (k + 1.25) / N2); mapped++; return;
+      const k = stepOf[p] != null ? stepOf[p] : 0; f.s0 = k / N2; f.s1 = Math.min(1, (k + 1) / N2);   // EngView plays its steps one after another
+      const ks = keysOf[p]; if (ks && ks.length > 1) { f.keys = ks.map(([k1, a1]) => [k1 / N2, Math.min(1, (k1 + 1) / N2), a1]); f.s0 = f.keys[0][0]; }   // a panel that moves more than once (folded flat, then opened)
+      mapped++; return;
     }
     if (p >= 0) { f.parent = idOf(lead[p]); f.axis = f.axis || [[0, 0], [1, 0]]; f.ang = 0; f.s0 = 0; f.s1 = 0.02; return; }   // same EngView panel: rigid
     // not inside any EngView panel: keep our own hinge, but hang it on the panel of its old parent
