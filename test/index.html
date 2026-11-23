@@ -4325,7 +4325,7 @@ function Viewer3D(canvas) {
           const C4 = [[x0, z0], [x1, z0], [x1, z1], [x0, z1]].map(([x, z]) => M4.ap(Mw, [x, yy, z]));
           quads.push({ w: C4, uv: [[0, 0], [1, 0], [1, 1], [0, 1]], to: null, ti: null, sub, colO: '#c2a77a', colI: '#c2a77a', e: [true, true, true, true], over: { id: Mw === M1 ? 'P1' : 'P3', side: 'in' } }); });
       }
-      if (b.base) {   // board lying on the bottom, inside
+      if (b.base && t >= 0.999) {   // board lying on the bottom, inside — put in once the bag is fully formed (never seen through a bottom still folding)
         const zb = b.y1 - (5 * Math.max(0.6, 0.004 * Math.max(m.Bw, m.Bh)) + 3), A = M4.ap(M1, [px[0], 0, zb]), B = M4.ap(M1, [px[1], 0, zb]), C = M4.ap(M3, [px[2], 0, zb]), D = M4.ap(M3, [px[3], 0, zb]);
         const c = [0, 1, 2].map(k => (A[k] + B[k] + C[k] + D[k]) / 4), sub = (p, q) => p.map((v, k) => v - q[k]), ln = v => Math.hypot(...v) || 1;
         const ab = sub(B, A), ad = sub(D, A), ua = ab.map(v => v / ln(ab)), ud = ad.map(v => v / ln(ad)), hl = Math.max(5, (ln(ab) - b.base.m) / 2 - gus * (b.y1 - zb) / Math.max(1, b.y1 - b.y0) - 1.5), hw = Math.max(5, (ln(ad) - b.base.m) / 2 - 1);   // the gussets (at both ends) bend in above the bottom: the board stays clear of them
