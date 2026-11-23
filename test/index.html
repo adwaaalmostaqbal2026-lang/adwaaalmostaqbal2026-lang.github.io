@@ -1664,23 +1664,25 @@ function fitPad(im, w, h, col) {
   g.drawImage(im, (cw - dw) / 2, (ch - dh) / 2, dw, dh); return C[key] = c;
 }
 // finish masks (black = foil / spot UV) put into the picture's alpha: 1 paper, 2/3 spot UV, 1/3 foil -> the shader makes it shine
-function finImg(im, M) {   // M: { foil, foil2, spot, emb, deb } masks (black = there)
-  M = M || {}; const ks = ['foil', 'foil2', 'spot', 'emb', 'deb'];
+function finImg(im, M) {   // M: { foil, foil2, foil3, foil4, spot, emb, deb, white } masks (black = there)
+  M = M || {}; const ks = ['foil', 'foil2', 'foil3', 'foil4', 'spot', 'emb', 'deb', 'white'];
   if (!im || !im.width || !ks.some(k => M[k])) return im;
   const id = o => o ? (o.__aid || (o.__aid = (_glBag.n = (_glBag.n || 0) + 1))) : 0, C = im.__finC || (im.__finC = {}), key = ks.map(k => id(M[k])).join('|'); if (C[key]) return C[key];
   const k = Math.min(1, 2048 / Math.max(im.width, im.height)), w = Math.max(1, Math.round(im.width * k)), h = Math.max(1, Math.round(im.height * k)), N = w * h;
   const c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d'); g.drawImage(im, 0, 0, w, h); const D = g.getImageData(0, 0, w, h), px = D.data;
   const on = m => { if (!m) return null; const t = document.createElement('canvas'); t.width = w; t.height = h; const x = t.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, w, h); x.drawImage(m, 0, 0, w, h); const q = x.getImageData(0, 0, w, h).data, o = new Float32Array(N); for (let i = 0; i < N; i++) o[i] = (q[i * 4] + q[i * 4 + 1] + q[i * 4 + 2]) / 3 < 128 ? 1 : 0; return o; };
-  const F = on(M.foil), F2 = on(M.foil2), S = on(M.spot), E = on(M.emb), Db = on(M.deb);
-  for (let i = 0; i < N; i++) px[i * 4 + 3] = (F && F[i]) || (F2 && F2[i]) ? 85 : S && S[i] ? 170 : 255;
+  const F = on(M.foil), F2 = on(M.foil2), F3 = on(M.foil3), F4 = on(M.foil4), S = on(M.spot), E = on(M.emb), Db = on(M.deb), Wt = on(M.white);
+  const fIdx = i => F4 && F4[i] ? 4 : F3 && F3[i] ? 3 : F2 && F2[i] ? 2 : F && F[i] ? 1 : 0;
+  for (let i = 0; i < N; i++) px[i * 4 + 3] = fIdx(i) ? 85 : S && S[i] ? 170 : 255;
   g.putImageData(D, 0, 0); c.__finish = true;
-  // heights (soft edges like a real die): R = 0.5 + emboss - deboss, G = spot UV coat / foil, B = which foil colour
-  const be = Math.max(1, w / 650), Hr = new Float32Array(N), Hg = new Float32Array(N);
+  // heights (soft edges like a real die): R = 0.5 + emboss - deboss - the foil block's press, G = spot UV coat, B = which foil (or the white under-print elsewhere)
+  const be = Math.max(1, w / 650), Hr = new Float32Array(N), Hg = new Float32Array(N), Fp = new Float32Array(N);
   if (E) _blurCh(E, w, h, be); if (Db) _blurCh(Db, w, h, be);
-  for (let i = 0; i < N; i++) { Hr[i] = 0.5 + 0.5 * ((E ? E[i] : 0) - (Db ? Db[i] : 0)); Hg[i] = S && S[i] ? 1 : (F && F[i]) || (F2 && F2[i]) ? 0.35 : 0; }
-  _blurCh(Hg, w, h, Math.max(1, w / 1600));
+  for (let i = 0; i < N; i++) { Fp[i] = fIdx(i) ? 1 : 0; Hg[i] = S && S[i] ? 1 : 0; }
+  _blurCh(Fp, w, h, Math.max(1, w / 1400)); _blurCh(Hg, w, h, Math.max(1, w / 1600));
+  for (let i = 0; i < N; i++) Hr[i] = Math.max(0, Math.min(1, 0.5 + 0.5 * ((E ? E[i] : 0) - (Db ? Db[i] : 0)) - 0.07 * Fp[i]));
   const hb = document.createElement('canvas'); hb.width = w; hb.height = h; const hx = hb.getContext('2d'), HD = hx.createImageData(w, h), hp = HD.data;
-  for (let i = 0; i < N; i++) { hp[i * 4] = Hr[i] * 255; hp[i * 4 + 1] = Hg[i] * 255; hp[i * 4 + 2] = F2 && F2[i] ? 255 : 0; hp[i * 4 + 3] = 255; }
+  for (let i = 0; i < N; i++) { const fi = fIdx(i); hp[i * 4] = Hr[i] * 255; hp[i * 4 + 1] = Hg[i] * 255; hp[i * 4 + 2] = fi ? (fi - 1) * 85 : Wt && Wt[i] ? 255 : 0; hp[i * 4 + 3] = 255; }
   hx.putImageData(HD, 0, 0); c.__emb = hb;
   return C[key] = c;
 }
@@ -2553,12 +2555,16 @@ async function pdfInspect(bytes, opt){
 // (vector shapes only; text and pictures in a spot colour are counted and reported, not drawn)
 const SPOT_KIND = [
   ['die', /(cut|die\b|dieline|crease|contour|perf|thru|stanz|kiss|دايكت|تكسير|\bقص)/i],
+  ['white', /(opaque\s*white|^white\b|\bwhite\s*(ink|under|base)|underprint|weiss|blanc|أبيض|ابيض)/i],
   ['foil2', /(silver|silber|argent|chrome|فضي|فضه|فضة)/i],
   ['foil', /(foil|gold|metal|bronze|copper|stamp|hot\s*foil|تذهيب|فويل|ذهب)/i],
   ['spot', /(spot\s*uv|\buv\b|varnish|gloss|vernis|\black\b|سبوت|يوفي|ورنيش)/i],
   ['deb', /(deboss|غائر|غاير)/i],
   ['emb', /(emboss|blind|كفراج|بارز)/i]];
-const FIN_KINDS = ['foil', 'foil2', 'spot', 'emb', 'deb'];
+const FIN_KINDS = ['foil', 'foil2', 'spot', 'emb', 'deb', 'white'];
+const FOIL_K = ['foil', 'foil2', 'foil3', 'foil4'], FOIL_C = ['foilCol', 'foilCol2', 'foilCol3', 'foilCol4'];
+const foilColMap = () => { try { return JSON.parse(localStorage.getItem('adwaaFoilCol') || '{}') || {}; } catch (e) { return {}; } };
+const foilColDef = n => /silver|silber|argent|chrome|فضي|فضه|فضة/i.test(n) ? '#c9ccd3' : /copper|bronze|نحاس/i.test(n) ? '#b87333' : /rose|روز/i.test(n) ? '#e3a98c' : /holo|هولو/i.test(n) ? 'holo' : '#d4a04a';
 const spotKindAuto = n => { for (const [k, re] of SPOT_KIND) if (re.test(n)) return k; return null; };
 // what each plate does, chosen by the user (kept by plate name, like a finishing profile): 'ink' = a printing colour, 'none' = leave it out
 const spotMap = () => { if (!spotMap.m) { try { spotMap.m = JSON.parse(localStorage.getItem('adwaaSpotMap') || '{}') || {}; } catch (e) { spotMap.m = {}; } } return spotMap.m; };
@@ -2602,19 +2608,22 @@ async function pdfSpotMasks(bytes, pageNo, maxPx) {
   const pg = pages[pageNo - 1]; if (!pg) return null;
   const box = (get(pg.inh.CropBox) || get(pg.inh.MediaBox) || [0, 0, 612, 792]).map(v => +get(v) || 0), [bx0, by0, bx1, by1] = box, pw = bx1 - bx0, ph = by1 - by0;
   const sc = Math.min(4, maxPx / Math.max(pw, ph)), W = Math.max(1, Math.round(pw * sc)), H = Math.max(1, Math.round(ph * sc));
-  const masks = {}, names = {}; let textSpot = 0, imgSpot = 0, painted = 0;
+  const masks = {}, names = {}, byName = {}, pend = {}; let textSpot = 0, imgSpot = 0, painted = 0;
+  const cvN = nm => { if (byName[nm]) return byName[nm]; const c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W, H); byName[nm] = c; return c; };
   const cv = k => { if (masks[k]) return masks[k]; const c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W, H); masks[k] = c; return c; };
   const mul = (a, b) => [a[0] * b[0] + a[1] * b[2], a[0] * b[1] + a[1] * b[3], a[2] * b[0] + a[3] * b[2], a[2] * b[1] + a[3] * b[3], a[4] * b[0] + a[5] * b[2] + b[4], a[4] * b[1] + a[5] * b[3] + b[5]];
   const BASE = [sc, 0, 0, -sc, -bx0 * sc, by1 * sc];
   // colour space -> list of colorant names (spot) or null (process)
   const csNames = (cs, res) => { cs = get(cs); if (cs && cs.name && res && res.ColorSpace) { const r = get(get(res.ColorSpace)[cs.name]); if (r) cs = r; }
-    if (Array.isArray(cs)) { const t = cs[0] && cs[0].name; if (t === 'Separation') return [get(cs[1]).name]; if (t === 'DeviceN') return (get(cs[1]) || []).map(x => get(x).name); } return null; };
+    if (Array.isArray(cs)) { const t = cs[0] && cs[0].name; if (t === 'Separation') { const nm = get(cs[1]).name; if (!(nm in pend)) pend[nm] = [cs, 0, 1]; return [nm]; }
+      if (t === 'DeviceN') { const ns = (get(cs[1]) || []).map(x => get(x).name); ns.forEach((nm, i) => { if (!(nm in pend)) pend[nm] = [cs, i, ns.length]; }); return ns; } } return null; };
   const run = async (txt, res, ctm0, depth) => {
     if (depth > 12) return; const T = txt.match(/<<|>>|\[|\]|\/[^\s\/\[\]<>(){}%]*|\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]*>|[+-]?\d*\.?\d+(?:[eE][+-]?\d+)?|[A-Za-z'"*]+|%[^\r\n]*/g) || [];
     const stack = []; let ctm = ctm0, gs = []; let fillCS = null, strokeCS = null, fillT = [], strokeT = [], lw = 1, path = new Path2D(), inText = false;
     const paint = (fill, stroke, evenodd) => { const doIt = (csn, tints, isFill) => { if (!csn) return; csn.forEach((nm, ci) => { const t = +tints[ci] || 0; if (t < 0.02) return; const k = spotKind(nm || ''); if (!k || k === 'none') return;
-        (names[k] = names[k] || new Set()).add(nm); const g = cv(k).getContext('2d'), M = mul(ctm, BASE); g.setTransform(M[0], M[1], M[2], M[3], M[4], M[5]); g.globalAlpha = Math.min(1, t); g.fillStyle = g.strokeStyle = '#000';
-        if (isFill) g.fill(path, evenodd ? 'evenodd' : 'nonzero'); else { g.lineWidth = Math.max(lw, 0.5 / sc); g.stroke(path); } g.globalAlpha = 1; painted++; }); };
+        (names[k] = names[k] || new Set()).add(nm); const M = mul(ctm, BASE);
+        [cv(k)].concat(k === 'foil' || k === 'foil2' ? [cvN(nm)] : []).forEach(cc => { const g = cc.getContext('2d'); g.setTransform(M[0], M[1], M[2], M[3], M[4], M[5]); g.globalAlpha = Math.min(1, t); g.fillStyle = g.strokeStyle = '#000';
+          if (isFill) g.fill(path, evenodd ? 'evenodd' : 'nonzero'); else { g.lineWidth = Math.max(lw, 0.5 / sc); g.stroke(path); } g.globalAlpha = 1; }); painted++; }); };
       if (fill) doIt(fillCS, fillT, true); if (stroke) doIt(strokeCS, strokeT, false); path = new Path2D(); };
     for (let i = 0; i < T.length; i++) { const x = T[i];
       if (x[0] === '%') continue;
@@ -2658,7 +2667,28 @@ async function pdfSpotMasks(bytes, pageNo, maxPx) {
   for (const c of parts) { const r = c && c.ref != null ? c.ref : null; if (r != null && objs[r]) txt += (await dec(objs[r])) + '\n'; }
   await run(txt, get(pg.inh.Resources) || {}, [1, 0, 0, 1, 0, 0], 0);
   const out = {}; Object.keys(names).forEach(k => out[k] = [...names[k]]);
-  return { wMm: pw * 25.4 / 72, hMm: ph * 25.4 / 72, masks, names: out, textSpot, imgSpot, painted };
+  // the colour each spot plate was given in the file (its alternate colour at 100%)
+  const psEval = (txt, ins) => { const T = String(txt).replace(/[{}]/g, ' ').trim().split(/\s+/).filter(Boolean), st = ins.slice();
+    for (const x of T) { if (/^[+-]?(\d+\.?\d*|\.\d+)$/.test(x)) { st.push(+x); continue; } const b = () => st.pop();
+      switch (x) { case 'dup': st.push(st[st.length - 1]); break; case 'exch': { const q = b(), r = b(); st.push(q, r); break; } case 'pop': b(); break;
+        case 'add': st.push(b() + b()); break; case 'mul': st.push(b() * b()); break; case 'sub': { const q = b(); st.push(b() - q); break; } case 'div': { const q = b(); st.push(b() / q); break; }
+        case 'neg': st.push(-b()); break; case 'abs': st.push(Math.abs(b())); break; case 'copy': { const n = b(); st.push(...st.slice(st.length - n)); break; } case 'index': { const n = b(); st.push(st[st.length - 1 - n]); break; }
+        case 'roll': { const j = b(), n = b(), a = st.splice(st.length - n, n), jj = ((j % n) + n) % n; st.push(...a.slice(n - jj), ...a.slice(0, n - jj)); break; }
+        default: return null; } } return st; };
+  const fnEval = async (f, ins) => { const fo = get(f); if (!fo) return null; const ft = +get(fo.FunctionType);
+    if (ft === 2) { const C0 = (get(fo.C0) || [0]).map(v => +get(v)), C1 = (get(fo.C1) || [1]).map(v => +get(v)), N = +get(fo.N) || 1, x = Math.pow(ins[0], N); return C1.map((c, i) => (C0[i] || 0) + x * (c - (C0[i] || 0))); }
+    if (ft === 4 && f && f.ref != null && objs[f.ref]) { const r = psEval(await dec(objs[f.ref]), ins); return r && r.length ? r : null; } return null; };
+  const toHex = v => '#' + v.map(x => Math.round(Math.max(0, Math.min(1, x)) * 255).toString(16).padStart(2, '0')).join('');
+  const cols = {};
+  for (const nm of Object.keys(pend)) { try { const [cs, idx, n] = pend[nm], ins = Array.from({ length: n }, (_, i) => i === idx ? 1 : 0), v = await fnEval(cs[3], ins); if (!v) continue;
+    let alt = get(cs[2]), an = alt && alt.name, nc = v.length; if (Array.isArray(alt)) { an = alt[0] && alt[0].name; if (an === 'ICCBased') { const d = get(alt[1]); nc = +get(d && d.N) || nc; an = nc === 4 ? 'DeviceCMYK' : nc === 1 ? 'DeviceGray' : 'DeviceRGB'; } }
+    let rgb = null; if (an === 'DeviceCMYK' && v.length >= 4) rgb = [(1 - v[0]) * (1 - v[3]), (1 - v[1]) * (1 - v[3]), (1 - v[2]) * (1 - v[3])];
+    else if (an === 'DeviceRGB' && v.length >= 3) rgb = v.slice(0, 3); else if (an === 'DeviceGray') rgb = [v[0], v[0], v[0]];
+    else if (an === 'Lab' && v.length >= 3) { const fy = (v[0] + 16) / 116, fx = fy + v[1] / 500, fz = fy - v[2] / 200, iv = t => t > 0.2069 ? t * t * t : (t - 16 / 116) / 7.787, X = 0.9642 * iv(fx), Y = iv(fy), Z = 0.8249 * iv(fz);
+      const l = [3.1339 * X - 1.6169 * Y - 0.4906 * Z, -0.9788 * X + 1.9161 * Y + 0.0335 * Z, 0.0719 * X - 0.2290 * Y + 1.4052 * Z]; rgb = l.map(c => c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(Math.max(0, c), 1 / 2.4) - 0.055); }
+    if (rgb) cols[nm] = toHex(rgb); } catch (e) {} }
+  const foils = Object.keys(byName).map(nm => ({ name: nm, kind: spotKind(nm), canvas: byName[nm], col: cols[nm] || null }));
+  return { wMm: pw * 25.4 / 72, hMm: ph * 25.4 / 72, masks, names: out, textSpot, imgSpot, painted, foils, cols };
 }
 
 // ---- what the bag has (finishes, extras), as small icons with a word under each: video side strip and customer page
@@ -4003,7 +4033,7 @@ function _glBagProg(G) {
     'void main(){float w=uC.w-aP.z;gl_Position=vec4(2.0*aP.x*uC.x/uC.y,2.0*aP.y*uC.x/uC.z,(-aP.z/uC.w)*0.95*w,w);vP=aP;vN=aN;vCO=aCO;vCI=aCI;vUV=aUV;vF=aF;vA=aA;}';
   const fs = (der ? '#extension GL_OES_standard_derivatives : enable\n#define DER 1\n' : '') +
     'precision mediump float;varying vec3 vN;varying vec3 vCO;varying vec3 vCI;varying vec4 vUV;varying vec4 vF;varying float vA;varying vec3 vP;' +
-    'uniform sampler2D uT;uniform sampler2D uE;uniform sampler2D uEnv;uniform float uTs;uniform float uEye;uniform float uFlip;uniform float uGl;uniform vec3 uFoil;uniform vec3 uFoil2;uniform float uFoilR;uniform float uEmb;' +
+    'uniform sampler2D uT;uniform sampler2D uE;uniform sampler2D uEnv;uniform float uTs;uniform float uEye;uniform float uFlip;uniform float uGl;uniform vec3 uFoil;uniform vec3 uFoil2;uniform vec3 uFoil3;uniform vec3 uFoil4;uniform float uFoilR;uniform float uEmb;uniform float uSub;uniform vec3 uSubC;' +
     // the studio, at three softness levels (0 sharp .. 2 very soft), brightened so lights read as lights
     'vec3 envS(vec3 R,float lv){float u=atan(R.x,R.z)*0.15915+0.5;float v=clamp(acos(clamp(R.y,-1.0,1.0))*0.31831,0.01,0.99);float l0=min(floor(lv),1.0);float t=clamp(lv-l0,0.0,1.0);' +
     ' vec3 a=texture2D(uEnv,vec2(u,(l0+v)/3.0)).rgb;vec3 b=texture2D(uEnv,vec2(u,(l0+1.0+v)/3.0)).rgb;vec3 e=mix(a,b,t);return e*e*1.7+e*0.22;}' +
@@ -4027,10 +4057,13 @@ function _glBagProg(G) {
     '  if(has>0.5){vec2 e=vec2(uTs,0.0);float b1=texture2D(uE,uv-e.xy).r-texture2D(uE,uv+e.xy).r;float b2=texture2D(uE,uv-e.yx).r-texture2D(uE,uv+e.yx).r;c*=1.0+dot(vec2(b1,b2),vec2(0.6,0.8))*2.5*uEmb;}' +
     '\n#endif\n' +
     '  d=max(dot(n,L),0.0);float nv=max(dot(n,V),0.0);float fz=pow(1.0-nv,5.0);vec3 base=c*(amb+0.55*d+(d-d0)*0.9);' +
-    '  if(fa<0.5){vec3 R=reflect(-V,n);vec3 e=envS(R,uFoilR);vec3 fc=hs.b>0.5?uFoil2:uFoil;' +   // foil = metal: the studio in the foil colour
-    '   float gr=0.95+0.1*hsh(floor(uv*2400.0));vec3 m=fc*(0.62+e*1.45)*mix(1.0,gr,step(0.5,uFoilR))+fc*pow(max(dot(n,normalize(L+V)),0.0),36.0)*0.9;' +
-    '   gl_FragColor=vec4(mix(m,e,fz*0.35),1.0);return;}' +
+    '  if(fa<0.5){vec3 fc=hs.b<0.17?uFoil:hs.b<0.5?uFoil2:hs.b<0.83?uFoil3:uFoil4;' +   // foil = metal pressed onto the sheet: it takes the paper's grain, so light runs along the strokes
+    '   vec3 nf=normalize(n+vec3(vn(uv*vec2(110.0,900.0))-0.5,vn(uv*vec2(95.0,1000.0)+7.3)-0.5,0.0)*0.18+vec3(vn(uv*vec2(400.0,3200.0))-0.5,0.0,0.0)*0.06);vec3 R=reflect(-V,nf);vec3 e=envS(R,uFoilR);' +
+    '   if(fc.r<0.0){float hu=fract(dot(R.xy,vec2(0.9,0.6))*1.6+(uv.x+uv.y)*2.0);fc=clamp(abs(fract(hu+vec3(0.0,0.667,0.333))*6.0-3.0)-1.0,0.0,1.0)*0.55+0.45;}' +   // hologram
+    '   float gr=0.94+0.12*hsh(floor(uv*2400.0));vec3 m=fc*(0.5+e*1.9)*mix(1.0,gr,step(0.5,uFoilR))+fc*pow(max(dot(nf,normalize(L+V)),0.0),40.0)*1.1;' +
+    '   gl_FragColor=vec4(mix(m,e,fz*0.3),1.0);return;}' +
     '  vec2 pn=has>0.5?uv*900.0:vec2(0.0);vec3 wob=vec3(vn(pn)-0.5,vn(pn+31.7)-0.5,0.0);' +   // the slight waviness of a laminated / varnished sheet
+    '  if(uSub>0.5&&fr&&!(has>0.5&&hs.b>0.5)){vec3 Rm=reflect(-V,n);vec3 em=envS(Rm,mix(1.4,0.3,uGl));base=c*uSubC*(0.24+em*1.55)+c*uSubC*pow(max(dot(n,normalize(L+V)),0.0),30.0)*0.6;}' +   // metallized board: the print is a see-through film on metal (white under-print stays paper)
     '  float lu=dot(base,vec3(0.3,0.59,0.11));' +
     '  if(fa<0.85){vec3 nq=normalize(n+wob*0.02);vec3 R=reflect(-V,nq);vec3 e=envS(R,0.04);' +   // spot UV: thick clear gloss — the colour under it deep and rich, and it flashes white when it catches a light
     '   float st=0.7+0.6*vn(vec2(uv.x*2600.0,uv.y*260.0));float g2=pow(max(dot(nq,normalize(L+V)),0.0),220.0)*1.6;' +
@@ -4050,7 +4083,7 @@ function _glBagProg(G) {
   const pr = gl.createProgram(); gl.attachShader(pr, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(pr);
   if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) throw new Error('bag link');
   const loc = n => gl.getAttribLocation(pr, n);
-  G.bag = { pr, a: { aP: loc('aP'), aN: loc('aN'), aCO: loc('aCO'), aCI: loc('aCI'), aUV: loc('aUV'), aF: loc('aF'), aA: loc('aA') }, uC: gl.getUniformLocation(pr, 'uC'), uT: gl.getUniformLocation(pr, 'uT'), uFlip: gl.getUniformLocation(pr, 'uFlip'), uGl: gl.getUniformLocation(pr, 'uGl'), uFoil: gl.getUniformLocation(pr, 'uFoil'), uE: gl.getUniformLocation(pr, 'uE'), uTs: gl.getUniformLocation(pr, 'uTs'), uEye: gl.getUniformLocation(pr, 'uEye'), uEnv: gl.getUniformLocation(pr, 'uEnv'), uFoil2: gl.getUniformLocation(pr, 'uFoil2'), uFoilR: gl.getUniformLocation(pr, 'uFoilR'), uEmb: gl.getUniformLocation(pr, 'uEmb'), buf: gl.createBuffer(), tex: gl.createTexture(), texE: gl.createTexture(), texEnv: gl.createTexture(), atlasKey: null, slots: new Map() };
+  G.bag = { pr, a: { aP: loc('aP'), aN: loc('aN'), aCO: loc('aCO'), aCI: loc('aCI'), aUV: loc('aUV'), aF: loc('aF'), aA: loc('aA') }, uC: gl.getUniformLocation(pr, 'uC'), uT: gl.getUniformLocation(pr, 'uT'), uFlip: gl.getUniformLocation(pr, 'uFlip'), uGl: gl.getUniformLocation(pr, 'uGl'), uFoil: gl.getUniformLocation(pr, 'uFoil'), uE: gl.getUniformLocation(pr, 'uE'), uTs: gl.getUniformLocation(pr, 'uTs'), uEye: gl.getUniformLocation(pr, 'uEye'), uEnv: gl.getUniformLocation(pr, 'uEnv'), uFoil2: gl.getUniformLocation(pr, 'uFoil2'), uFoilR: gl.getUniformLocation(pr, 'uFoilR'), uFoil3: gl.getUniformLocation(pr, 'uFoil3'), uFoil4: gl.getUniformLocation(pr, 'uFoil4'), uSub: gl.getUniformLocation(pr, 'uSub'), uSubC: gl.getUniformLocation(pr, 'uSubC'), uEmb: gl.getUniformLocation(pr, 'uEmb'), buf: gl.createBuffer(), tex: gl.createTexture(), texE: gl.createTexture(), texEnv: gl.createTexture(), atlasKey: null, slots: new Map() };
   { const B = G.bag, ev = _envMap(); gl.bindTexture(gl.TEXTURE_2D, B.texEnv); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, ev);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR); }
   return G.bag;
@@ -4128,8 +4161,9 @@ function _glBag(V, Q, view, rot, cam, ctx) {
   if (cv.width !== PW || cv.height !== PH) { cv.width = PW; cv.height = PH; }
   gl.viewport(0, 0, PW, PH); gl.clearColor(0, 0, 0, 0); gl.clearDepth(1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   gl.useProgram(B.pr); gl.uniform4f(B.uC, K, W, H, dist); gl.uniform1i(B.uT, 0); gl.uniform1f(B.uFlip, V.glFlip === false ? 0 : 1);
-  { const A = V.art || {}, g = A.gloss === 'gloss' ? 1 : A.gloss === 'matte' ? 0 : ((V.autoGloss || A.glossAuto) ? 1 : 0.35), fc = _hexRGB(A.foilCol || '#c9a961'), f2 = _hexRGB(A.foilCol2 || '#c9ccd3'); gl.uniform1f(B.uGl, g); gl.uniform3f(B.uFoil, fc[0], fc[1], fc[2]); gl.uniform3f(B.uFoil2, f2[0], f2[1], f2[2]);
-    gl.uniform1f(B.uFoilR, A.foilType === 'cold' ? 0.25 : 0.6); gl.uniform1f(B.uEmb, +A.embH || 0.7); }
+  { const A = V.art || {}, g = A.gloss === 'gloss' ? 1 : A.gloss === 'matte' ? 0 : ((V.autoGloss || A.glossAuto) ? 1 : 0.35), fcol = (v, d) => v === 'holo' ? [-1, 0, 0] : _hexRGB(v || d), fc = fcol(A.foilCol, '#d4a04a'), f2 = fcol(A.foilCol2, '#c9ccd3'), f3 = fcol(A.foilCol3, '#b87333'), f4 = fcol(A.foilCol4, '#e3a98c'); gl.uniform1f(B.uGl, g); gl.uniform3f(B.uFoil, fc[0], fc[1], fc[2]); gl.uniform3f(B.uFoil2, f2[0], f2[1], f2[2]); gl.uniform3f(B.uFoil3, f3[0], f3[1], f3[2]); gl.uniform3f(B.uFoil4, f4[0], f4[1], f4[2]);
+    { const sc = A.subst === 'gold' ? _hexRGB('#e2c27a') : _hexRGB('#d9dde2'); gl.uniform1f(B.uSub, /^(silver|gold)$/.test(A.subst || '') ? 1 : 0); gl.uniform3f(B.uSubC, sc[0], sc[1], sc[2]); }
+    gl.uniform1f(B.uFoilR, A.foilType === 'cold' ? 0.25 : 0.7); gl.uniform1f(B.uEmb, +A.embH || 0.7); }
   gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, B.texE); gl.uniform1i(B.uE, 1); gl.uniform1f(B.uTs, 1.5 / (B.texSz || 2048)); gl.uniform1f(B.uEye, dist); gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, B.texEnv); gl.uniform1i(B.uEnv, 2);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, B.tex);
   gl.disable(gl.CULL_FACE); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
@@ -4216,6 +4250,9 @@ function Viewer3D(canvas) {
         if (p.noLayer && Mof[p.parent]) {   // bag turn-in: lies just inside its wall, never outside it
           const Mp = Mof[p.parent], a0 = M4.ap(Mp, [0, 0, 0]), a1 = M4.ap(Mp, [0, -1, 0]), k = 0.9 * _ease((t - (p.s0 || 0)) / Math.max(1e-6, (p.s1 || 0) - (p.s0 || 0)));
           const Mw = M4.mul(E, Ms[p.id]); M = M4.mul(M4.tr((a1[0] - a0[0]) * k, (a1[1] - a0[1]) * k, (a1[2] - a0[2]) * k), Mw); }
+        if (isBag && Mof.P1 && /^(BG1|BG2|BF)$/.test(p.id)) {   // bag bottom: gusset flaps folded first (innermost), then the front flap, the back flap outside — never cutting through each other
+          const up0 = M4.ap(Mof.P1, [0, 0, m.bag.y1]), up1 = M4.ap(Mof.P1, [0, 0, m.bag.y1 - 1]), o = (p.id === 'BF' ? 0.9 : 1.8) * _ease((t - (p.s0 || 0)) / Math.max(1e-6, (p.s1 || 0) - (p.s0 || 0)));
+          M = M4.mul(M4.tr((up1[0] - up0[0]) * o, (up1[1] - up0[1]) * o, (up1[2] - up0[2]) * o), M); }
         Mof[p.id] = M;
         const k = ['P1', 'P2', 'P3', 'P4'].indexOf(p.id), tk = isBag && /^TT\d$/.test(p.id) ? +p.id.slice(2) : -1;
         let disp = null;
@@ -4230,7 +4267,7 @@ function Viewer3D(canvas) {
         const pw = p.x1 - p.x0, ph = p.y1 - p.y0, own = (x, z) => [(x - p.x0) / pw, (z - p.y0) / ph], full = (x, z) => [x / Bw, z / Bh];
         let iO = null, uO = null, iI = null, uI = null;
         if (isBag) {
-          const pm = x => x && fitPad(x, m.bag.L, m.bag.D, '#ffffff'), fm = (sf, f) => ({ foil: f(art['foil' + sf]), foil2: f(art['foil2' + sf]), spot: f(art['spot' + sf]), emb: f(art['emb' + sf]), deb: f(art['deb' + sf]) }), id = x => x;
+          const pm = x => x && fitPad(x, m.bag.L, m.bag.D, '#ffffff'), fm = (sf, f) => ({ foil: f(art['foil' + sf]), foil2: f(art['foil2' + sf]), foil3: f(art['foil3' + sf]), foil4: f(art['foil4' + sf]), spot: f(art['spot' + sf]), emb: f(art['emb' + sf]), deb: f(art['deb' + sf]), white: f(art['white' + sf]) }), id = x => x;
           const fF = art.front && finImg(fitPad(art.front, m.bag.L, m.bag.D), fm('F', pm)), fB = art.back && finImg(fitPad(art.back, m.bag.L, m.bag.D), fm('B', pm));
           const fA = art.flat && finImg(art.flat, fm('A', id));
           if (art.mode === 'flat') {
@@ -4244,7 +4281,9 @@ function Viewer3D(canvas) {
             const H = m.bag.y1 - m.bag.y0; iO = tk === 0 ? fF : fB; uO = (x, z) => [(x - p.x0) / pw, Math.min(1, (p.y1 - z) / H)]; }
           if (art.inside && tk < 0) { iI = art.inside; uI = (x, z) => [1 - x / Bw, z / Bh]; }
         } else if (!extra && V.img) { iO = V.img; uO = full; }
-        const C4 = [[p.x0, p.y0], [p.x1, p.y0], [p.x1, p.y1], [p.x0, p.y1]], sub = [];
+        const qy0 = isBag && /^BG\d$/.test(p.id) ? p.y0 + 3 : p.y0;   // bag bottom: the gusset flaps start a little off their fold, so they never cut through the gusset
+        const qx = isBag && /^B[FB]$/.test(p.id) ? 2 : 0;   // front / back bottom flaps stop short of the gusset folds
+        const C4 = [[p.x0 + qx, qy0], [p.x1 - qx, qy0], [p.x1 - qx, p.y1], [p.x0 + qx, p.y1]], sub = [];
         const sl = isBag && m.bag.slot && (k === 0 || k === 2 || tk === 0 || tk === 2) ? (() => { const S2 = m.bag.slot, cx = (p.x0 + p.x1) / 2, y0b = m.bag.y0;
           return tk >= 0 ? { cx, ya: y0b - S2.top - S2.h, yb: y0b - S2.top, w: S2.w } : { cx, ya: y0b + S2.top, yb: y0b + S2.top + S2.h, w: S2.w }; })() : null;
         if (sl) {   // die-cut handle: cells round the slot, none inside it
@@ -4256,7 +4295,7 @@ function Viewer3D(canvas) {
         else if (iO || iI || disp) {   // small cells only to keep the picture straight in perspective (and to bend the gusset); the panel itself is one piece
           let nx = Math.max(1, Math.min(6, Math.round(pw / 45))), nz = Math.max(1, Math.min(6, Math.round(ph / 45))); if (disp) { nx = Math.max(2, nx + (nx % 2)); nz = Math.max(nz, tk >= 0 ? 1 : 6); }
           for (let i = 0; i < nx; i++) for (let j = 0; j < nz; j++) {
-            const X0 = p.x0 + pw * i / nx, X1 = p.x0 + pw * (i + 1) / nx, Z0 = p.y0 + ph * j / nz, Z1 = p.y0 + ph * (j + 1) / nz, pts = [[X0, Z0], [X1, Z0], [X1, Z1], [X0, Z1]];
+            const X0 = p.x0 + qx + (pw - 2 * qx) * i / nx, X1 = p.x0 + qx + (pw - 2 * qx) * (i + 1) / nx, Z0 = qy0 + (p.y1 - qy0) * j / nz, Z1 = qy0 + (p.y1 - qy0) * (j + 1) / nz, pts = [[X0, Z0], [X1, Z0], [X1, Z1], [X0, Z1]];
             sub.push({ w: pts.map(([x, z]) => WP(x, z)), o: iO ? pts.map(([x, z]) => uO(x, z)) : null, i: iI ? pts.map(([x, z]) => uI(x, z)) : null });
           }
         }
