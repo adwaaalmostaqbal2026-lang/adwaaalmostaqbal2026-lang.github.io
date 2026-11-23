@@ -1664,15 +1664,22 @@ function fitPad(im, w, h, col) {
   g.drawImage(im, (cw - dw) / 2, (ch - dh) / 2, dw, dh); return C[key] = c;
 }
 // finish masks (black = foil / spot UV) put into the picture's alpha: 1 paper, 2/3 spot UV, 1/3 foil -> the shader makes it shine
-function finImg(im, fm, sm) {
-  if (!im || !im.width || (!fm && !sm)) return im;
-  const id = o => o ? (o.__aid || (o.__aid = (_glBag.n = (_glBag.n || 0) + 1))) : 0, C = im.__finC || (im.__finC = {}), key = id(fm) + '|' + id(sm); if (C[key]) return C[key];
+function finImg(im, fm, sm, em) {
+  if (!im || !im.width || (!fm && !sm && !em)) return im;
+  const id = o => o ? (o.__aid || (o.__aid = (_glBag.n = (_glBag.n || 0) + 1))) : 0, C = im.__finC || (im.__finC = {}), key = id(fm) + '|' + id(sm) + '|' + id(em); if (C[key]) return C[key];
   const k = Math.min(1, 2048 / Math.max(im.width, im.height)), w = Math.max(1, Math.round(im.width * k)), h = Math.max(1, Math.round(im.height * k));
   const c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d'); g.drawImage(im, 0, 0, w, h); const D = g.getImageData(0, 0, w, h), px = D.data;
   const lum = m => { if (!m) return null; const t = document.createElement('canvas'); t.width = w; t.height = h; const x = t.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, w, h); x.drawImage(m, 0, 0, w, h); return x.getImageData(0, 0, w, h).data; };
-  const F = lum(fm), S = lum(sm);
-  for (let i = 0; i < px.length; i += 4) { const f = F ? (F[i] + F[i + 1] + F[i + 2]) / 3 : 255, sp = S ? (S[i] + S[i + 1] + S[i + 2]) / 3 : 255; px[i + 3] = f < 128 ? 85 : sp < 128 ? 170 : 255; }
-  g.putImageData(D, 0, 0); c.__finish = true; return C[key] = c;
+  const F = lum(fm), S = lum(sm), E = lum(em), hc = document.createElement('canvas'); hc.width = w; hc.height = h; const hx = hc.getContext('2d'), HD = hx.createImageData(w, h), hp = HD.data;
+  for (let i = 0; i < px.length; i += 4) { const f = F ? (F[i] + F[i + 1] + F[i + 2]) / 3 : 255, sp = S ? (S[i] + S[i + 1] + S[i + 2]) / 3 : 255, eb = E ? (E[i] + E[i + 1] + E[i + 2]) / 3 : 255;
+    px[i + 3] = f < 128 ? 85 : sp < 128 ? 170 : 255; hp[i] = 255 - eb; hp[i + 1] = sp < 128 ? 255 : f < 128 ? 150 : 0; hp[i + 2] = 0; hp[i + 3] = 255; }
+  g.putImageData(D, 0, 0); c.__finish = true;
+  // heights for the raised look: emboss rounded off wide, spot UV / foil only a little
+  hx.putImageData(HD, 0, 0); const hb = document.createElement('canvas'); hb.width = w; hb.height = h; const bx = hb.getContext('2d'), bl = Math.max(1, w / 500);
+  bx.fillStyle = '#000'; bx.fillRect(0, 0, w, h); try { bx.filter = 'blur(' + (bl * 2.2).toFixed(1) + 'px)'; } catch (e) {} bx.globalCompositeOperation = 'lighter';
+  const one = (ch, b) => { const t = document.createElement('canvas'); t.width = w; t.height = h; const tx = t.getContext('2d'), TD = tx.createImageData(w, h), tp = TD.data; for (let i = 0; i < tp.length; i += 4) { tp[i + ch] = hp[i + ch]; tp[i + 3] = 255; } tx.putImageData(TD, 0, 0); try { bx.filter = 'blur(' + b.toFixed(1) + 'px)'; } catch (e) {} bx.drawImage(t, 0, 0); };
+  if (E) one(0, bl * 2.2); if (F || S) one(1, bl * 0.8); bx.filter = 'none'; c.__emb = hb;
+  return C[key] = c;
 }
 function panels3D(style, I, R) {
   const L = +I.L, W = +I.W, D = +I.D, t = R.t, P = [];
@@ -2544,7 +2551,7 @@ async function pdfInspect(bytes, opt){
 const SPOT_KIND = [
   ['die', /(cut|die\b|dieline|crease|contour|perf|thru|stanz|kiss|دايكت|تكسير|\bقص)/i],
   ['foil', /(foil|gold|silver|metal|bronze|copper|stamp|hot\s*foil|تذهيب|فويل|ذهب|فضي|فضه)/i],
-  ['spot', /(spot\s*uv|\buv\b|varnish|gloss|vernis|lack|سبوت|يوفي|ورنيش)/i],
+  ['spot', /(spot\s*uv|\buv\b|varnish|gloss|vernis|\black\b|سبوت|يوفي|ورنيش)/i],
   ['emb', /(emboss|deboss|blind|كفراج|بارز|غائر)/i]];
 const spotKind = n => { for (const [k, re] of SPOT_KIND) if (re.test(n)) return k; return null; };
 async function pdfSpotMasks(bytes, pageNo, maxPx) {
@@ -3955,9 +3962,9 @@ function _glBagProg(G) {
   if (G.bag) return G.bag;
   const gl = G.gl, sh = (t, s) => { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); if (!gl.getShaderParameter(o, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(o)); return o; };
   const vs = 'attribute vec3 aP;attribute vec3 aN;attribute vec3 aCO;attribute vec3 aCI;attribute vec4 aUV;attribute vec4 aF;attribute float aA;' +
-    'uniform vec4 uC;varying vec3 vN;varying vec3 vCO;varying vec3 vCI;varying vec4 vUV;varying vec4 vF;varying float vA;' +
-    'void main(){float w=uC.w-aP.z;gl_Position=vec4(2.0*aP.x*uC.x/uC.y,2.0*aP.y*uC.x/uC.z,(-aP.z/uC.w)*0.95*w,w);vN=aN;vCO=aCO;vCI=aCI;vUV=aUV;vF=aF;vA=aA;}';
-  const fs = 'precision mediump float;varying vec3 vN;varying vec3 vCO;varying vec3 vCI;varying vec4 vUV;varying vec4 vF;varying float vA;uniform sampler2D uT;uniform float uFlip;uniform float uGl;uniform vec3 uFoil;' +
+    'uniform vec4 uC;varying vec3 vN;varying vec3 vCO;varying vec3 vCI;varying vec4 vUV;varying vec4 vF;varying float vA;varying vec3 vP;' +
+    'void main(){float w=uC.w-aP.z;gl_Position=vec4(2.0*aP.x*uC.x/uC.y,2.0*aP.y*uC.x/uC.z,(-aP.z/uC.w)*0.95*w,w);vP=aP;vN=aN;vCO=aCO;vCI=aCI;vUV=aUV;vF=aF;vA=aA;}';
+  const fs = 'precision mediump float;varying vec3 vN;varying vec3 vCO;varying vec3 vCI;varying vec4 vUV;varying vec4 vF;varying float vA;varying vec3 vP;uniform sampler2D uT;uniform sampler2D uE;uniform float uTs;uniform float uEye;uniform float uFlip;uniform float uGl;uniform vec3 uFoil;' +
     'void main(){' +
     ' if(vF.z>8.5){float r=length(vUV.xy*2.0-1.0);float a=(1.0-smoothstep(0.35,1.0,r))*0.38;gl_FragColor=vec4(0.0,0.0,0.0,a);return;}' +
     ' bool fr=(uFlip>0.5)?!gl_FrontFacing:gl_FrontFacing;' +
@@ -3967,8 +3974,19 @@ function _glBagProg(G) {
     ' vec3 L=normalize(vec3(0.35,0.8,0.55));float d=max(dot(n,L),0.0);float amb=0.5;' +
     ' float sp=0.0;float ex=18.0;' +
     ' if(vF.z<0.5){sp=uGl*0.32;ex=mix(6.0,26.0,uGl);' +
-    '  if(fa<0.5){vec3 R0=reflect(-L,n);float m=0.62+0.55*pow(max(dot(n,normalize(vec3(-0.35,0.55,0.75))),0.0),2.0)-0.18*pow(max(dot(n,normalize(vec3(0.6,-0.3,0.4))),0.0),2.0);float s2=pow(max(R0.z,0.0),9.0);gl_FragColor=vec4(uFoil*m*1.08+vec3(0.85)*s2,1.0);return;}' +
-    '  else if(fa<0.85){sp=1.0;ex=40.0;c=c*1.07+0.015;}}' +
+    // finishes: R = emboss height, G = spot UV / foil height (both softened) -> a raised edge lit from the top left
+    '  vec3 V=normalize(vec3(0.0,0.0,uEye)-vP);float bev=0.0;' +
+    '  if(has>0.5){vec2 e=vec2(uTs,0.0);vec4 h1=texture2D(uE,uv+e.xy),h2=texture2D(uE,uv-e.xy),h3=texture2D(uE,uv+e.yx),h4=texture2D(uE,uv-e.yx);bev=dot(vec2(h2.r-h1.r,h4.r-h3.r)*2.6+vec2(h2.g-h1.g,h4.g-h3.g)*1.1,vec2(0.6,0.8));}' +
+    '  vec3 H=normalize(L+V);' +
+    '  if(fa<0.5){vec3 R=reflect(-V,n);' +   // hot foil: a mirror of a soft studio, so it sweeps light and dark as the bag turns
+    '   float env=0.52+0.22*max(R.y,0.0)+0.85*exp(-pow((R.y-0.22)*4.5,2.0))+0.35*exp(-pow((R.x+0.35)*3.2,2.0))*max(R.z,0.0)-0.12*exp(-pow((R.y+0.15)*5.0,2.0));' +
+    '   float gr=fract(sin(dot(floor(uv*1800.0),vec2(12.9898,78.233)))*43758.5453);env*=0.94+0.12*gr;' +
+    '   float s2=pow(max(dot(n,H),0.0),90.0)*1.5;' +
+    '   gl_FragColor=vec4(uFoil*env*1.05+vec3(s2)+vec3(bev*0.55),1.0);return;}' +
+    '  else if(fa<0.85){vec3 R=reflect(-V,n);' +   // spot UV: thick clear gloss, a sharp moving highlight and a raised edge
+    '   float s2=pow(max(dot(n,H),0.0),140.0)*1.7+0.38*exp(-pow((R.y-0.25)*6.0,2.0))*max(R.z,0.0);' +
+    '   gl_FragColor=vec4((c*1.05+0.015)*(amb+0.55*d)*(1.0+bev*1.4)+vec3(s2),1.0);return;}' +
+    '  c*=1.0+bev*1.3;}' +
     ' if(vF.z>0.5&&vF.z<1.5){c*=0.78+0.32*(0.5+0.5*sin(vF.w*0.9+vA*2.0));sp=0.15;}' +
     ' else if(vF.z>1.5&&vF.z<2.5){c*=0.72+0.36*(0.5+0.5*sin(vF.w*0.55+vA*2.0));}' +
     ' else if(vF.z>2.5&&vF.z<3.5){float b=abs(sin(vF.w*0.7+vA*2.0))*abs(sin(vF.w*0.7-vA*2.0));c*=0.7+0.45*b;sp=0.1;}' +
@@ -3980,7 +3998,7 @@ function _glBagProg(G) {
   const pr = gl.createProgram(); gl.attachShader(pr, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(pr);
   if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) throw new Error('bag link');
   const loc = n => gl.getAttribLocation(pr, n);
-  G.bag = { pr, a: { aP: loc('aP'), aN: loc('aN'), aCO: loc('aCO'), aCI: loc('aCI'), aUV: loc('aUV'), aF: loc('aF'), aA: loc('aA') }, uC: gl.getUniformLocation(pr, 'uC'), uT: gl.getUniformLocation(pr, 'uT'), uFlip: gl.getUniformLocation(pr, 'uFlip'), uGl: gl.getUniformLocation(pr, 'uGl'), uFoil: gl.getUniformLocation(pr, 'uFoil'), buf: gl.createBuffer(), tex: gl.createTexture(), atlasKey: null, slots: new Map() };
+  G.bag = { pr, a: { aP: loc('aP'), aN: loc('aN'), aCO: loc('aCO'), aCI: loc('aCI'), aUV: loc('aUV'), aF: loc('aF'), aA: loc('aA') }, uC: gl.getUniformLocation(pr, 'uC'), uT: gl.getUniformLocation(pr, 'uT'), uFlip: gl.getUniformLocation(pr, 'uFlip'), uGl: gl.getUniformLocation(pr, 'uGl'), uFoil: gl.getUniformLocation(pr, 'uFoil'), uE: gl.getUniformLocation(pr, 'uE'), uTs: gl.getUniformLocation(pr, 'uTs'), uEye: gl.getUniformLocation(pr, 'uEye'), buf: gl.createBuffer(), tex: gl.createTexture(), texE: gl.createTexture(), atlasKey: null, slots: new Map() };
   return G.bag;
 }
 function _glBag(V, Q, view, rot, cam, ctx) {
@@ -3995,13 +4013,16 @@ function _glBag(V, Q, view, rot, cam, ctx) {
     B.atlasKey = key; B.slots = new Map();
     const S = Math.min(2048, gl.getParameter(gl.MAX_TEXTURE_SIZE) || 2048), n = Math.max(1, imgs.length), cols = Math.ceil(Math.sqrt(n)), ss = Math.floor(S / cols), pad = 4;
     const ac = document.createElement('canvas'); ac.width = ac.height = S; const ax = ac.getContext('2d'); ax.fillStyle = '#fff'; ax.fillRect(0, 0, S, S);
-    imgs.forEach((im, i) => { const cx = (i % cols) * ss, cy = Math.floor(i / cols) * ss;
+    const ae = document.createElement('canvas'); ae.width = ae.height = S; const ex2 = ae.getContext('2d'); ex2.fillStyle = '#000'; ex2.fillRect(0, 0, S, S); B.texSz = S;
+    imgs.forEach((im, i) => { const cx = (i % cols) * ss, cy = Math.floor(i / cols) * ss; if (im.__emb) try { ex2.drawImage(im.__emb, cx, cy, ss, ss); } catch (e) {}
       try { if (im.__finish) { const tc = document.createElement('canvas'); tc.width = tc.height = ss; tc.getContext('2d').drawImage(im, 0, 0, ss, ss); ax.putImageData(tc.getContext('2d').getImageData(0, 0, ss, ss), cx, cy); } else ax.drawImage(im, cx, cy, ss, ss); } catch (e) {} B.slots.set(im, { x: (cx + pad) / S, y: (cy + pad) / S, w: (ss - 2 * pad) / S, h: (ss - 2 * pad) / S }); });
     gl.bindTexture(gl.TEXTURE_2D, B.tex); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, ac);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     try { gl.generateMipmap(gl.TEXTURE_2D); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); } catch (e) { gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); }
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.bindTexture(gl.TEXTURE_2D, B.texE); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, ae);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     G.img = null;   // the shared texture now holds the atlas, not the box picture
   }
   const at = (img, uv) => { const s = B.slots.get(img); if (!s) return [0, 0]; const u = Math.max(0, Math.min(1, uv[0])), v = Math.max(0, Math.min(1, uv[1])); return [s.x + u * s.w, s.y + v * s.h]; };
@@ -4020,7 +4041,12 @@ function _glBag(V, Q, view, rot, cam, ctx) {
     if (q.tube) {   // handle: a round cord (or a flat ribbon) along the arc
       const P = q.pts.map(view), N = rot(q.nrm), col = rgb(q.col), r = q.mm / 2, mode = { twist: 1, rope: 2, flat: 3, ribbon: 4, tip: 5, knot: 6 }[q.kind] || 1;
       const seg = mode === 4 ? 6 : 10, len = []; let s = 0; P.forEach((p, i) => { if (i) s += Math.hypot(...sub3(p, P[i - 1])); len.push(s); });
-      const ring = i => { const T = nrm(sub3(P[Math.min(P.length - 1, i + 1)], P[Math.max(0, i - 1)])), B1 = nrm(cross(T, N)), N1 = cross(B1, T); return { B1, N1 }; };
+      const TT = P.map((p, i) => nrm(sub3(P[Math.min(P.length - 1, i + 1)], P[Math.max(0, i - 1)]))), FR = []; let i0 = 0, best = -1;
+      TT.forEach((T, i) => { const c = Math.hypot(...cross(T, N)); if (c > best + 1e-6) { best = c; i0 = i; } });
+      { const T = TT[i0], B1 = nrm(cross(T, N)); FR[i0] = { B1, N1: cross(B1, T) }; }
+      const carry = (i, j) => { const T = TT[j], Np = FR[i].N1, d = Np[0] * T[0] + Np[1] * T[1] + Np[2] * T[2]; let N1 = [Np[0] - T[0] * d, Np[1] - T[1] * d, Np[2] - T[2] * d]; if (Math.hypot(...N1) < 1e-6) N1 = Np; N1 = nrm(N1); FR[j] = { B1: cross(T, N1), N1 }; };
+      for (let j = i0 + 1; j < P.length; j++) carry(j - 1, j); for (let j = i0 - 1; j >= 0; j--) carry(j + 1, j);
+      const ring = i => FR[i];
       for (let i = 0; i + 1 < P.length; i++) { const f0 = ring(i), f1 = ring(i + 1);
         const pt = (j, fr, p) => { if (mode === 4) { const u = j / seg * 2 - 1; const th = 0.8; const side = j <= seg / 2 ? 1 : -1; return { p: p.map((v, k) => v + fr.B1[k] * u * r + fr.N1[k] * th * 0), n: fr.N1, a: u }; }
           const a = j / seg * Math.PI * 2, ca = Math.cos(a), sa = Math.sin(a), nn = [0, 1, 2].map(k => fr.B1[k] * ca + fr.N1[k] * sa); return { p: p.map((v, k) => v + nn[k] * r), n: nn, a }; };
@@ -4049,6 +4075,7 @@ function _glBag(V, Q, view, rot, cam, ctx) {
   gl.viewport(0, 0, PW, PH); gl.clearColor(0, 0, 0, 0); gl.clearDepth(1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   gl.useProgram(B.pr); gl.uniform4f(B.uC, K, W, H, dist); gl.uniform1i(B.uT, 0); gl.uniform1f(B.uFlip, V.glFlip === false ? 0 : 1);
   { const A = V.art || {}, g = A.gloss === 'gloss' ? 1 : A.gloss === 'matte' ? 0 : ((V.autoGloss || A.glossAuto) ? 1 : 0.35), fc = _hexRGB(A.foilCol || '#d4af37'); gl.uniform1f(B.uGl, g); gl.uniform3f(B.uFoil, fc[0], fc[1], fc[2]); }
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, B.texE); gl.uniform1i(B.uE, 1); gl.uniform1f(B.uTs, 1.5 / (B.texSz || 2048)); gl.uniform1f(B.uEye, dist);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, B.tex);
   gl.disable(gl.CULL_FACE); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
   const run = arr => { if (!arr.length) return; gl.bindBuffer(gl.ARRAY_BUFFER, B.buf); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(arr), gl.STREAM_DRAW);
@@ -4148,8 +4175,8 @@ function Viewer3D(canvas) {
         const pw = p.x1 - p.x0, ph = p.y1 - p.y0, own = (x, z) => [(x - p.x0) / pw, (z - p.y0) / ph], full = (x, z) => [x / Bw, z / Bh];
         let iO = null, uO = null, iI = null, uI = null;
         if (isBag) {
-          const pm = x => x && fitPad(x, m.bag.L, m.bag.D, '#ffffff'), fF = art.front && finImg(fitPad(art.front, m.bag.L, m.bag.D), pm(art.foilF), pm(art.spotF)), fB = art.back && finImg(fitPad(art.back, m.bag.L, m.bag.D), pm(art.foilB), pm(art.spotB));
-          const fA = art.flat && finImg(art.flat, art.foilA, art.spotA);
+          const pm = x => x && fitPad(x, m.bag.L, m.bag.D, '#ffffff'), fF = art.front && finImg(fitPad(art.front, m.bag.L, m.bag.D), pm(art.foilF), pm(art.spotF), pm(art.embF)), fB = art.back && finImg(fitPad(art.back, m.bag.L, m.bag.D), pm(art.foilB), pm(art.spotB), pm(art.embB));
+          const fA = art.flat && finImg(art.flat, art.foilA, art.spotA, art.embA);
           if (art.mode === 'flat') {
             if (art.flatHalf && art.flat) {   // half-die file (glue | front | gusset): first half, and the same (or the second file) on back + gusset
               const Hw = m.bag.Hw, sh = m.bag.L + m.bag.W, second = p.x0 >= m.bag.px[2] - 0.5;
@@ -4233,7 +4260,12 @@ function Viewer3D(canvas) {
         [['P1', px[0], px[1], M1, cards.filter(c => !c.back)], ['P3', px[2], px[3], M3, cards.filter(c => c.back)]].forEach(([id, xa, xb, M, bul]) => {
           const pts = []; for (let k = 0; k <= 20; k++) pts.push(M4.ap(M, arc(xa, xb, Math.PI * k / 20, bul)));
           for (let k = 0; k < 20; k++) quads.push({ line: true, w: [pts[k], pts[k + 1]], col, mm, kind: hv.type, k, over: { id, side: 'out', rank: 1.5, soft: true } });
-          const tp = [], NS = bul.length ? 220 : 64; for (let k = 0; k <= NS; k++) tp.push(M4.ap(M, arc(xa, xb, Math.PI * k / NS, bul)));   // fine steps where it goes through a card
+          let tl = []; const NS = bul.length ? 220 : 64; for (let k = 0; k <= NS; k++) tl.push(arc(xa, xb, Math.PI * k / NS, bul));   // fine steps where it goes through a card
+          if (CORD_H(hv.type) && hv.type !== 'rope' && hv.type !== 'ribbon' && !hv.eyelet) {   // the cord comes down the wall and turns into the hole: no cut end shows
+            const R = clr, zt = hv.hy - R, el = x => { const o = []; for (let s2 = 0; s2 <= 8; s2++) { const a = s2 / 8 * Math.PI / 2; o.push([x, (clr - R) + R * Math.cos(a) + 0.15 * Math.sin(a), zt + R * Math.sin(a)]); } o.push([x, -1.3, hv.hy]); return o; };
+            let a0 = 0, a1 = tl.length - 1; while (a0 < tl.length - 2 && tl[a0][2] > zt) a0++; while (a1 > 1 && tl[a1][2] > zt) a1--;
+            tl = [...el(tl[0][0]).reverse(), ...tl.slice(a0, a1 + 1), ...el(tl[tl.length - 1][0])]; }
+          const tp = tl.map(q => M4.ap(M, q));
           const o0 = M4.ap(M, [(xa + xb) / 2, 0, b.y0]), o1 = M4.ap(M, [(xa + xb) / 2, 1, b.y0]);
           quads.push({ tube: true, pts: tp, w: tp, nrm: [o1[0] - o0[0], o1[1] - o0[1], o1[2] - o0[2]], col, mm, kind: hv.type === 'tape' ? 'ribbon' : hv.type });
           if (hv.type === 'tape') {   // the glued ends: a short flat strip down the inside of the turn
@@ -4248,11 +4280,13 @@ function Viewer3D(canvas) {
             const ex = (sx < 0 ? xa + (xb - xa) / 2 - Math.min(hv.gap / 2, (xb - xa) / 2 - 8) : xa + (xb - xa) / 2 + Math.min(hv.gap / 2, (xb - xa) / 2 - 8)), z = hv.hy;
             const q0 = M4.ap(M, [0, 0, 0]), q1 = M4.ap(M, [1, 0, 0]), nr = [q1[0] - q0[0], q1[1] - q0[1], q1[2] - q0[2]];   // along the wall: never parallel to a cord going through it
             // the hole: a small dark ring round the cord, through the wall and the turn-in behind it
-            if (hv.type !== 'ribbon') { const hr = [[ex, 0.6, z], [ex, -0.3, z], [ex, -1.4, z]].map(q => M4.ap(M, q)); quads.push({ tube: true, pts: hr, w: hr, nrm: nr, col: '#2a2420', mm: mm + 2.4, kind: 'tip', cap: true }); }
+            if (hv.type !== 'ribbon') { const hR = mm / 2 + 1.1, hc = M4.ap(M, [ex, 0.3, z]);   // the punched hole: a dark round opening on the paper, the cord going into it
+              for (let k = 0; k < 16; k++) { const a1 = k / 16 * Math.PI * 2, a2 = (k + 1) / 16 * Math.PI * 2, P1 = M4.ap(M, [ex + hR * Math.cos(a1), 0.3, z + hR * Math.sin(a1)]), P2 = M4.ap(M, [ex + hR * Math.cos(a2), 0.3, z + hR * Math.sin(a2)]);
+                quads.push({ w: [hc, P1, P2, hc], uv: [[0, 0], [1, 0], [1, 1], [0, 1]], to: null, ti: null, sub: [], colO: '#1d1814', colI: '#1d1814', e: [false, false, false, false], over: { id, side: 'out', rank: 1.4 } }); } }
             if (hv.type === 'ribbon') { const k = [[ex, clr, z], [ex, -2, z], [ex + sx * 1.5, -5, z + 1.5], [ex + sx * 2, -6.5, z + 5]].map(q => M4.ap(M, q)); quads.push({ tube: true, pts: k, w: k, nrm: nr, col, mm: 12, kind: 'knot' }); return; }
             // always inside: the cord goes through the hole, bends down along the inner side, and the tip hangs a little apart from the wall (never shows through it)
             const vr = [0.38, 0.22, 0.3, 0.46][(id === 'P1' ? 0 : 2) + ei], ag = sx * vr, dx = Math.sin(ag), dz = Math.cos(ag), L = 27;
-            const st = [[ex, clr, z], [ex, clr * 0.4, z], [ex, -1, z], [ex, -2.5, z], [ex + sx * 0.6, -5.2, z + 1.6], [ex + sx * 1.2, -6.8, z + 4], [ex + dx * 6, -8, z + 8]];
+            const st = [[ex, hv.eyelet ? clr : 0.3, z], [ex, hv.eyelet ? clr * 0.4 : -0.4, z], [ex, -1, z], [ex, -2.5, z], [ex + sx * 0.6, -5.2, z + 1.6], [ex + sx * 1.2, -6.8, z + 4], [ex + dx * 6, -8, z + 8]];
             const e0 = st[st.length - 1], tip = []; for (let k = 0; k <= 4; k++) tip.push([e0[0] + dx * L * k / 4, e0[1] - 0.6 * k, e0[2] + dz * L * k / 4]);
             const sw = st.map(q => M4.ap(M, q)), tw = tip.map(q => M4.ap(M, q));
             quads.push({ tube: true, pts: sw, w: sw, nrm: nr, col, mm, kind: hv.type });
