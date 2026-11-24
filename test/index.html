@@ -557,6 +557,7 @@ function libPartName(D) {   // 'FEFCO 0312 Lid' -> 'Lid' (Arabic for the usual p
 }
 function libGlueDefault(D) {
   if (!D) return 1;
+  if (D.l === 'V') return /^EV[CF][13]/.test(D.c) ? 1 : 0;
   if (/unglued/i.test(D.n)) return 0;
   if (D.l === 'E') return ['A', 'C', 'E'].includes(D.c[0]) || /glued/i.test(D.n) ? 1 : 0;
   const f = D.c.slice(0, 2);
@@ -2348,7 +2349,7 @@ function libFaces3DEV2(R, th, ev) {
       const [a, b] = [R.map(up.line[0], up.line[1]), R.map(up.line[2], up.line[3])];
       const np = idOf(lead[up.p]); f.ang = angOf[p] != null ? angOf[p] : (old[i].parent === np ? old[i].ang || 0 : 0); f.parent = np; f.axis = [a, b];
       const k = stepOf[p] != null ? stepOf[p] : 0; f.s0 = k / N2; f.s1 = Math.min(1, (k + 1) / N2);   // EngView plays its steps one after another
-      const ks = keysOf[p]; if (ks && ks.length > 1) { f.keys = ks.map(([k1, a1]) => [k1 / N2, Math.min(1, (k1 + 1) / N2), a1]); f.s0 = f.keys[0][0]; }   // a panel that moves more than once (folded flat, then opened)
+      f.evStep = k;   // EngView's own order; the factory-only moves (folded flat for gluing, then opened) are left out: the box folds the way a person closes it
       mapped++; return;
     }
     if (p >= 0) { f.parent = idOf(lead[p]); f.axis = f.axis || [[0, 0], [1, 0]]; f.ang = 0; f.s0 = 0; f.s1 = 0.02; return; }   // same EngView panel: rigid
@@ -2367,6 +2368,10 @@ function libFaces3DEV2(R, th, ev) {
   m.mapA = totA ? mapA / totA : 0;
   { const kids = Object.keys(lead).map(Number).filter(p => ev.par[p] && lead[p] !== R0); m.angFrac = kids.length ? kids.filter(p => angOf[p] != null).length / kids.length : 1; }
   m.ev = true; m.ev2 = true; m.root = idOf(R0);
+  // natural playing: EngView's steps in order, each one starting before the last has finished, no empty steps
+  { const used = [...new Set(m.faces.filter(f => f.evStep != null && Math.abs(f.ang || 0) > 0.5).map(f => f.evStep))].sort((a, b) => a - b), M = used.length || 1, ov = 0.7;
+    m.faces.forEach(f => { if (f.evStep == null) return; const r = Math.max(0, used.indexOf(f.evStep)); f.s0 = r / (M + ov); f.s1 = (r + 1 + ov) / (M + ov); });
+    m.standAt = -1; }   // a standing box stands from the start: the blank is held up like a poster and wraps round behind its front panel
   const big = ev.p.map((b, j) => Math.min(b[2] - b[0], b[3] - b[1]) >= 6 ? j : -1).filter(j => j >= 0);
   m.evq = big.length ? big.filter(j => lead[j] != null).length / big.length : 0;
   return m;
